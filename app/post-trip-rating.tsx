@@ -1,8 +1,9 @@
-import { Link } from "expo-router";
+import { Link, useRouter } from "expo-router";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 export default function PostTripRatingScreen() {
+  const router = useRouter();
   const [rating, setRating] = useState(0);
   const [review, setReview] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -41,7 +42,12 @@ export default function PostTripRatingScreen() {
       </Link>
 
       {submitted ? (
-        <Text style={styles.successText}>Thanks! Your rating has been recorded.</Text>
+        <View style={styles.successBlock}>
+          <Text style={styles.successText}>Thanks! Your rating has been recorded.</Text>
+          <Pressable onPress={() => router.replace("/(tabs)")} style={styles.homeButton}>
+            <Text style={styles.homeButtonText}>Back to Home</Text>
+          </Pressable>
+        </View>
       ) : null}
     </View>
   );
@@ -110,10 +116,25 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   successText: {
-    marginTop: 16,
     textAlign: "center",
     color: "#166534",
     fontWeight: "600",
     fontSize: 15,
+  },
+  successBlock: {
+    marginTop: 16,
+    alignItems: "center",
+    gap: 10,
+  },
+  homeButton: {
+    backgroundColor: "#0f766e",
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+  },
+  homeButtonText: {
+    color: "#ffffff",
+    fontWeight: "700",
+    fontSize: 14,
   },
 });
