@@ -24,16 +24,20 @@ This is the backend contract that the mobile app now expects for secure point aw
 
 ```json
 {
-  "points_earned": 15
+  "points_earned": 15,
+  "source": "backend",
+  "idempotent": false
 }
 ```
+
+- `idempotent`: `true` when this trip was **already** awarded before (retry / duplicate request). Points balance is not increased again; `points_earned` matches the original award for that ride.
 
 ## Backend Security Requirements
 
 1. Validate JWT and derive user id server-side.
 2. Ignore client-provided driver id if it does not match token user.
 3. Validate ride state is completed before awarding.
-4. Prevent duplicates with idempotency key per ride.
+4. Prevent duplicates with idempotency key per ride (store `rideId` as `idempotency_key` on `point_events`; unique per driver).
 5. Write point events + totals with service role only.
 
 ## App Behavior

@@ -1,6 +1,6 @@
 # KindRide - Project Status
 
-Last updated: 2026-03-25 (Week 2 Session 6)
+Last updated: 2026-03-24 (Week 2 Session 7)
 Owner: Oluwafemi Adebayo Adeyemi
 
 ## Current Build State
@@ -12,6 +12,7 @@ Week 2 Session 3 is complete.
 Week 2 Session 4 is complete.
 Week 2 Session 5 is complete.
 Week 2 Session 6 is complete.
+Week 2 Session 7 is complete.
 
 Working app flow (phone-tested):
 1. Home screen (`app/(tabs)/index.tsx`)
@@ -49,10 +50,11 @@ Working app flow (phone-tested):
   - `lib/points-award.ts` for secure write-path integration
   - fallback to local calculation when API unavailable
   - API contract doc (`docs/POINTS_AWARD_API_CONTRACT.md`)
-- FastAPI backend starter:
+- FastAPI backend (idempotent awards):
   - `backend/main.py` with `/health` and `/points/award`
-  - bearer-token gate and server-side scoring placeholder
-  - backend run guide (`backend/README.md`)
+  - Supabase JWT verification, server-side scoring, service-role writes
+  - `point_events` insert + `points` balance/tier update; duplicate `rideId` returns `idempotent: true`
+  - SQL migration `supabase/points_idempotency.sql`; `backend/.env.example` and run guide (`backend/README.md`)
 
 ## Not Implemented Yet (Planned)
 
@@ -61,7 +63,7 @@ Working app flow (phone-tested):
 - Matching algorithm backend (FastAPI)
 - Push notifications
 - Real SOS integrations (Twilio/contacts)
-- Persistent points award writes via backend (reads are now connected)
+- Real trip `rideId` from app navigation state (still demo id in post-trip screen)
 - Driver identity verification
 - In-app camera recording and retention policy
 
@@ -97,10 +99,13 @@ Week 2:
   - Implemented FastAPI points award starter endpoint
   - Added auth-token forwarding from app request headers
   - Added backend setup docs and local run instructions
-- Session 7 target:
-  - Connect backend to Supabase service role for real writes
-  - Add idempotency guard on `rideId`
-  - Replace demo ride payload with real trip context from app
+- Session 7 completed: yes
+  - Backend verifies Supabase JWT and derives `driver_id` from `sub`
+  - Service role writes: `point_events` (+ `idempotency_key`), `points` total + tier
+  - Race-safe idempotency: only the request that wins the insert updates the balance
+  - Migration `supabase/points_idempotency.sql`; founder-oriented comments in `main.py`
+- Session 8 target:
+  - Pass real `rideId` from trip flow; validate ride completion server-side when `rides` exists
 
 ## Security-First Checklist (Always On)
 
@@ -128,4 +133,4 @@ Operations:
 
 ## Resume Prompt (Copy/Paste for Next Session)
 
-"We are continuing KindRide. Read PROJECT_STATUS.md first. Start Week 2 Session 7 with security-first implementation. Current target: connect FastAPI points endpoint to Supabase writes with idempotency and real trip context."
+"We are continuing KindRide. Read PROJECT_STATUS.md first. Start Week 2 Session 8: real ride context in award payload and server-side ride validation when the rides table exists."
