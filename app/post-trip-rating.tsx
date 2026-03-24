@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 export default function PostTripRatingScreen() {
   const router = useRouter();
+  const currentUserRole: "driver" | "passenger" = "driver";
   const [rating, setRating] = useState(0);
   const [review, setReview] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -49,18 +50,24 @@ export default function PostTripRatingScreen() {
       {submitted ? (
         <View style={styles.successBlock}>
           <Text style={styles.successText}>Thanks! Your rating has been recorded.</Text>
-          <Text style={styles.pointsText}>You earned +{earnedPoints} points</Text>
-          <Pressable
-            onPress={() =>
-              router.push({
-                pathname: "/(tabs)/points",
-                params: { earned: String(earnedPoints) },
-              })
-            }
-            style={styles.pointsButton}
-          >
-            <Text style={styles.pointsButtonText}>View Points</Text>
-          </Pressable>
+          {currentUserRole === "driver" ? (
+            <>
+              <Text style={styles.pointsText}>You earned +{earnedPoints} points</Text>
+              <Pressable
+                onPress={() =>
+                  router.push({
+                    pathname: "/(tabs)/points",
+                    params: { earned: String(earnedPoints), role: currentUserRole },
+                  })
+                }
+                style={styles.pointsButton}
+              >
+                <Text style={styles.pointsButtonText}>View Points</Text>
+              </Pressable>
+            </>
+          ) : (
+            <Text style={styles.passengerNote}>Points are shown for driver accounts only.</Text>
+          )}
           <Pressable onPress={() => router.replace("/(tabs)")} style={styles.homeButton}>
             <Text style={styles.homeButtonText}>Back to Home</Text>
           </Pressable>
@@ -158,6 +165,11 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontWeight: "700",
     fontSize: 14,
+  },
+  passengerNote: {
+    color: "#4b587c",
+    fontSize: 14,
+    textAlign: "center",
   },
   homeButton: {
     backgroundColor: "#0f766e",

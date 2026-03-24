@@ -7,6 +7,7 @@ Owner: Oluwafemi Adebayo Adeyemi
 
 Week 1 is complete.
 Week 2 Session 1 is complete.
+Week 2 Session 2 is complete.
 
 Working app flow (phone-tested):
 1. Home screen (`app/(tabs)/index.tsx`)
@@ -37,6 +38,8 @@ Working app flow (phone-tested):
   - current tier (local)
   - local total points from last trip reward
   - progress bar toward next tier
+  - local point history list
+  - role-safe UI guard (driver-focused points actions)
 
 ## Not Implemented Yet (Planned)
 
@@ -61,10 +64,14 @@ Week 2:
   - Local points reward after rating: done
   - Starter Points screen: done
   - Phone flow stability check: passed
-- Session 2 target:
-  - Create local point history list (mock event log)
-  - Add simple role-safe UI guard for driver-only points actions
-  - Prepare Supabase table plan for points persistence
+- Session 2 completed: yes
+  - Local point history list (mock): done
+  - Role-safe points UI guard: done
+  - Phone test: passed
+- Session 3 target:
+  - Draft Supabase points tables and RLS plan
+  - Design secure data flow for point events (client -> backend -> database)
+  - Keep current local UI working while preparing persistence
 
 ## Security-First Checklist (Always On)
 
@@ -92,4 +99,4 @@ Operations:
 
 ## Resume Prompt (Copy/Paste for Next Session)
 
-"We are continuing KindRide. Read PROJECT_STATUS.md first. Start Week 2 Session 2 with security-first implementation. Current target: local point history list + role-safe points UI guard + Supabase points persistence plan, then phone-test and commit."
+"We are continuing KindRide. Read PROJECT_STATUS.md first. Start Week 2 Session 3 with security-first implementation. Current target: Supabase points tables + RLS plan + secure point event flow design, while keeping local points UI stable."
