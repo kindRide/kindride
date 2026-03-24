@@ -78,6 +78,7 @@ Week 2:
   - Ran SQL in Supabase and validated table creation
   - Wired points tab Supabase read integration
   - Added secure sign-in gate and preserved local fallback
+  - Final UI cleanup after verification (removed temporary diagnostics)
 - Session 5 target:
   - Add backend endpoint design for secure points awarding (write path)
   - Integrate post-rating submit to call backend (not direct DB write)
