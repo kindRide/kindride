@@ -1,6 +1,6 @@
 # KindRide - Project Status
 
-Last updated: 2026-03-25 (Week 2 Session 4)
+Last updated: 2026-03-25 (Week 2 Session 6)
 Owner: Oluwafemi Adebayo Adeyemi
 
 ## Current Build State
@@ -10,6 +10,8 @@ Week 2 Session 1 is complete.
 Week 2 Session 2 is complete.
 Week 2 Session 3 is complete.
 Week 2 Session 4 is complete.
+Week 2 Session 5 is complete.
+Week 2 Session 6 is complete.
 
 Working app flow (phone-tested):
 1. Home screen (`app/(tabs)/index.tsx`)
@@ -43,6 +45,14 @@ Working app flow (phone-tested):
   - point history list (local or Supabase source)
   - role-safe UI guard (driver-focused points actions)
   - secure sign-in card for authenticated points access
+- Backend-ready points award service:
+  - `lib/points-award.ts` for secure write-path integration
+  - fallback to local calculation when API unavailable
+  - API contract doc (`docs/POINTS_AWARD_API_CONTRACT.md`)
+- FastAPI backend starter:
+  - `backend/main.py` with `/health` and `/points/award`
+  - bearer-token gate and server-side scoring placeholder
+  - backend run guide (`backend/README.md`)
 
 ## Not Implemented Yet (Planned)
 
@@ -79,10 +89,18 @@ Week 2:
   - Wired points tab Supabase read integration
   - Added secure sign-in gate and preserved local fallback
   - Final UI cleanup after verification (removed temporary diagnostics)
-- Session 5 target:
-  - Add backend endpoint design for secure points awarding (write path)
-  - Integrate post-rating submit to call backend (not direct DB write)
-  - Add simple session persistence UX for points auth card
+- Session 5 completed: yes
+  - Added backend-ready points award service layer
+  - Wired post-rating submit to backend-ready interface with fallback
+  - Added points award API contract documentation
+- Session 6 completed: yes
+  - Implemented FastAPI points award starter endpoint
+  - Added auth-token forwarding from app request headers
+  - Added backend setup docs and local run instructions
+- Session 7 target:
+  - Connect backend to Supabase service role for real writes
+  - Add idempotency guard on `rideId`
+  - Replace demo ride payload with real trip context from app
 
 ## Security-First Checklist (Always On)
 
@@ -110,4 +128,4 @@ Operations:
 
 ## Resume Prompt (Copy/Paste for Next Session)
 
-"We are continuing KindRide. Read PROJECT_STATUS.md first. Start Week 2 Session 5 with security-first implementation. Current target: secure points write path design (backend endpoint) and connect post-rating flow to backend-ready interface."
+"We are continuing KindRide. Read PROJECT_STATUS.md first. Start Week 2 Session 7 with security-first implementation. Current target: connect FastAPI points endpoint to Supabase writes with idempotency and real trip context."

@@ -2,6 +2,8 @@ import { Link, useRouter } from "expo-router";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { awardPoints } from "@/lib/points-award";
+
 export default function PostTripRatingScreen() {
   const router = useRouter();
   const currentUserRole: "driver" | "passenger" = "driver";
@@ -9,13 +11,24 @@ export default function PostTripRatingScreen() {
   const [review, setReview] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [earnedPoints, setEarnedPoints] = useState(0);
+  const [pointsSource, setPointsSource] = useState<"backend" | "local">("local");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = () => {
-    const basePoints = 10;
-    const fiveStarBonus = rating === 5 ? 5 : 0;
-    const totalEarned = basePoints + fiveStarBonus;
-    setEarnedPoints(totalEarned);
+  const handleSubmit = async () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+
+    const result = await awardPoints({
+      rideId: "demo-ride-001",
+      rating,
+      wasZeroDetour: true,
+      distanceMiles: 2.2,
+    });
+
+    setEarnedPoints(result.pointsEarned);
+    setPointsSource(result.source);
     setSubmitted(true);
+    setIsSubmitting(false);
   };
 
   return (
@@ -40,7 +53,9 @@ export default function PostTripRatingScreen() {
       />
 
       <Pressable onPress={handleSubmit} style={styles.submitButton}>
-        <Text style={styles.submitButtonText}>Submit Rating</Text>
+        <Text style={styles.submitButtonText}>
+          {isSubmitting ? "Submitting..." : "Submit Rating"}
+        </Text>
       </Pressable>
 
       <Link href="/(tabs)" style={styles.skipLink}>
@@ -53,6 +68,9 @@ export default function PostTripRatingScreen() {
           {currentUserRole === "driver" ? (
             <>
               <Text style={styles.pointsText}>You earned +{earnedPoints} points</Text>
+              <Text style={styles.sourceText}>
+                Source: {pointsSource === "backend" ? "Backend API" : "Local fallback"}
+              </Text>
               <Pressable
                 onPress={() =>
                   router.push({
@@ -154,6 +172,10 @@ const styles = StyleSheet.create({
     color: "#0f766e",
     fontWeight: "700",
     fontSize: 16,
+  },
+  sourceText: {
+    color: "#4b587c",
+    fontSize: 12,
   },
   pointsButton: {
     backgroundColor: "#1d4ed8",
