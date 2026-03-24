@@ -1,6 +1,6 @@
 # KindRide - Project Status
 
-Last updated: 2026-03-25
+Last updated: 2026-03-25 (Week 2 Session 4)
 Owner: Oluwafemi Adebayo Adeyemi
 
 ## Current Build State
@@ -8,6 +8,8 @@ Owner: Oluwafemi Adebayo Adeyemi
 Week 1 is complete.
 Week 2 Session 1 is complete.
 Week 2 Session 2 is complete.
+Week 2 Session 3 is complete.
+Week 2 Session 4 is complete.
 
 Working app flow (phone-tested):
 1. Home screen (`app/(tabs)/index.tsx`)
@@ -35,21 +37,21 @@ Working app flow (phone-tested):
   - submit + skip + back to home
   - local points reward message after submit
 - Starter Points tab:
-  - current tier (local)
-  - local total points from last trip reward
+  - current tier and total points from Supabase read path
+  - local fallback when not authenticated/unavailable
   - progress bar toward next tier
-  - local point history list
+  - point history list (local or Supabase source)
   - role-safe UI guard (driver-focused points actions)
+  - secure sign-in card for authenticated points access
 
 ## Not Implemented Yet (Planned)
 
-- Supabase authentication
-- Supabase database schema and RLS
+- Full app-wide Supabase authentication flow (only points screen has minimal auth currently)
 - Real map/GPS live tracking
 - Matching algorithm backend (FastAPI)
 - Push notifications
 - Real SOS integrations (Twilio/contacts)
-- Persistent points engine and history in Supabase (local only for now)
+- Persistent points award writes via backend (reads are now connected)
 - Driver identity verification
 - In-app camera recording and retention policy
 
@@ -68,10 +70,18 @@ Week 2:
   - Local point history list (mock): done
   - Role-safe points UI guard: done
   - Phone test: passed
-- Session 3 target:
-  - Draft Supabase points tables and RLS plan
-  - Design secure data flow for point events (client -> backend -> database)
-  - Keep current local UI working while preparing persistence
+- Session 3 completed: yes
+  - Added Supabase points SQL schema (`supabase/points_schema.sql`)
+  - Added RLS policies for points and point_events
+  - Added secure points architecture doc (`docs/SECURE_POINTS_FLOW.md`)
+- Session 4 completed: yes
+  - Ran SQL in Supabase and validated table creation
+  - Wired points tab Supabase read integration
+  - Added secure sign-in gate and preserved local fallback
+- Session 5 target:
+  - Add backend endpoint design for secure points awarding (write path)
+  - Integrate post-rating submit to call backend (not direct DB write)
+  - Add simple session persistence UX for points auth card
 
 ## Security-First Checklist (Always On)
 
@@ -99,4 +109,4 @@ Operations:
 
 ## Resume Prompt (Copy/Paste for Next Session)
 
-"We are continuing KindRide. Read PROJECT_STATUS.md first. Start Week 2 Session 3 with security-first implementation. Current target: Supabase points tables + RLS plan + secure point event flow design, while keeping local points UI stable."
+"We are continuing KindRide. Read PROJECT_STATUS.md first. Start Week 2 Session 5 with security-first implementation. Current target: secure points write path design (backend endpoint) and connect post-rating flow to backend-ready interface."
