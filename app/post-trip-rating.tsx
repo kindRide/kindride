@@ -7,8 +7,13 @@ export default function PostTripRatingScreen() {
   const [rating, setRating] = useState(0);
   const [review, setReview] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [earnedPoints, setEarnedPoints] = useState(0);
 
   const handleSubmit = () => {
+    const basePoints = 10;
+    const fiveStarBonus = rating === 5 ? 5 : 0;
+    const totalEarned = basePoints + fiveStarBonus;
+    setEarnedPoints(totalEarned);
     setSubmitted(true);
   };
 
@@ -44,6 +49,18 @@ export default function PostTripRatingScreen() {
       {submitted ? (
         <View style={styles.successBlock}>
           <Text style={styles.successText}>Thanks! Your rating has been recorded.</Text>
+          <Text style={styles.pointsText}>You earned +{earnedPoints} points</Text>
+          <Pressable
+            onPress={() =>
+              router.push({
+                pathname: "/(tabs)/points",
+                params: { earned: String(earnedPoints) },
+              })
+            }
+            style={styles.pointsButton}
+          >
+            <Text style={styles.pointsButtonText}>View Points</Text>
+          </Pressable>
           <Pressable onPress={() => router.replace("/(tabs)")} style={styles.homeButton}>
             <Text style={styles.homeButtonText}>Back to Home</Text>
           </Pressable>
@@ -125,6 +142,22 @@ const styles = StyleSheet.create({
     marginTop: 16,
     alignItems: "center",
     gap: 10,
+  },
+  pointsText: {
+    color: "#0f766e",
+    fontWeight: "700",
+    fontSize: 16,
+  },
+  pointsButton: {
+    backgroundColor: "#1d4ed8",
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+  },
+  pointsButtonText: {
+    color: "#ffffff",
+    fontWeight: "700",
+    fontSize: 14,
   },
   homeButton: {
     backgroundColor: "#0f766e",
