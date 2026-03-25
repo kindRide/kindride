@@ -1,6 +1,6 @@
 # KindRide - Project Status
 
-Last updated: 2026-03-25 (Week 2 Session 15)
+Last updated: 2026-03-25 (Week 2 Session 16)
 Owner: Oluwafemi Adebayo Adeyemi
 
 ## Current Build State
@@ -20,15 +20,17 @@ Week 2 Session 11 is complete.
 Week 2 Session 12 is complete.
 Week 2 Session 13 is complete.
 Week 2 Session 15 is complete.
+Week 2 Session 16 is complete.
 
 Working app flow (phone-tested):
 1. Home screen (`app/(tabs)/index.tsx`)
 2. Ride Request screen (`app/(tabs)/ride-request.tsx`)
 3. Active Trip screen (`app/active-trip.tsx`)
-4. Post-Trip Rating screen (`app/post-trip-rating.tsx`)
-5. Back to Home after submission
-6. Local points reward shown after rating submit
-7. Points tab screen (`app/(tabs)/points.tsx`)
+4. (Sometimes) Rate passenger screen (`app/rate-passenger.tsx`) — about 1 in 5 trips, deterministic from `rideId`
+5. Post-Trip Rating screen (`app/post-trip-rating.tsx`)
+6. Back to Home after submission
+7. Driver rating bonus (+5 on 5 stars) from backend after post-trip submit
+8. Points tab screen (`app/(tabs)/points.tsx`)
 
 ## What Is Implemented
 
@@ -156,6 +158,11 @@ Week 2:
   - Updated app flow:
     - Active Trip sends distance/zero-detour at ride completion
     - Post-trip rating now displays rating bonus points from backend
+- Session 16 completed:
+  - Driver → passenger face ratings (smile / neutral / sad → +1 / 0 / −1) with optional comment (max 500 chars)
+  - SQL: `supabase/passenger_ratings_schema.sql` — run in Supabase SQL Editor (tables + trigger updating cumulative `passenger_reputation`)
+  - Backend: optional `passengerId` on `POST /rides/complete`; `POST /passengers/rate`; `GET /passengers/{passenger_id}/reputation`
+  - App: signed-in requester UUID passed as `passengerId`; ~1-in-5 trips open rate-passenger before driver star rating; active trip shows passenger community score when available
 
 ## Security-First Checklist (Always On)
 

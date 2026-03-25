@@ -66,6 +66,8 @@ import sys
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
+from uuid import UUID
 
 import httpx
 import jwt
@@ -73,7 +75,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from jwt import PyJWKClient
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # Always load .env next to this file (Uvicorn's working directory may be elsewhere).
 # This file is NOT the same as KindRide/.env used by Expo — you need both.
@@ -87,7 +89,7 @@ SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "").strip()
 
 logger = logging.getLogger("kindride.api")
 
-app = FastAPI(title="KindRide Points API", version="0.2.0")
+app = FastAPI(title="KindRide Points API", version="0.3.0")
 
 # Cache JWKS client so the first request doesn't repeatedly re-instantiate it.
 # This reduces latency when JWT verification happens via RS256.
@@ -369,14 +371,14 @@ def _update_points_balance(client: httpx.Client, driver_id: str, new_total: int)
         raise HTTPException(status_code=502, detail=f"Update points failed: {r.text}")
 
 
-def _ensure_completed_ride(client: httpx.Client, driver_id: str, ride_id: str) -> None:
-    """Guard: points operations only allowed for driver's completed rides."""
+def _fetch_completed_ride_for_driver(client: httpx.Client, driver_id: str, ride_id: str) -> dict:
+    """Returns rides row dict (status, passenger_id, …) when completed; raises otherwise."""
     r = client.get(
         _rest_url("/rides"),
         params={
             "id": f"eq.{ride_id}",
             "driver_id": f"eq.{driver_id}",
-            "select": "status",
+            "select": "status,passenger_id",
             "limit": "1",
         },
         headers=_service_headers(),
@@ -390,6 +392,11 @@ def _ensure_completed_ride(client: httpx.Client, driver_id: str, ride_id: str) -
             status_code=400,
             detail="Ride is not completed (missing /rides record or status != completed)",
         )
+    return rows[0]
+
+
+def _ensure_completed_ride(client: httpx.Client, driver_id: str, ride_id: str) -> None:
+    _fetch_completed_ride_for_driver(client, driver_id, ride_id)
 
 
 def _award_points_with_idempotency(
@@ -458,11 +465,60 @@ class CompleteRideRequest(BaseModel):
     rideId: str = Field(min_length=3)
     wasZeroDetour: bool = True
     distanceMiles: float = Field(ge=0)
+    passengerId: str | None = None
+
+    @field_validator("passengerId", mode="before")
+    @classmethod
+    def passenger_id_empty_to_none(cls, v: object) -> object:
+        if v == "":
+            return None
+        return v
+
+    @field_validator("passengerId")
+    @classmethod
+    def passenger_id_must_be_uuid(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        UUID(v)
+        return v
 
 
 class RatingBonusRequest(BaseModel):
     rideId: str = Field(min_length=3)
     rating: int = Field(ge=1, le=5)
+
+
+class RatePassengerRequest(BaseModel):
+    """Driver rates passenger after a completed ride (face + optional comment)."""
+
+    rideId: str = Field(min_length=3)
+    face: Literal["smile", "neutral", "sad"]
+    comment: str | None = Field(default=None, max_length=500)
+
+    @field_validator("comment", mode="before")
+    @classmethod
+    def normalize_comment(cls, v: object) -> object:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+
+class RatePassengerResponse(BaseModel):
+    score_delta: int
+    passenger_id: str
+    idempotent: bool = False
+
+
+class PassengerReputationResponse(BaseModel):
+    passenger_id: str
+    total_score: int
+    rating_count: int
+
+
+def _face_to_delta(face: Literal["smile", "neutral", "sad"]) -> int:
+    return {"smile": 1, "neutral": 0, "sad": -1}[face]
 
 
 @app.post("/rides/complete")
@@ -477,12 +533,14 @@ def complete_ride(
     now = datetime.now(timezone.utc).isoformat()
 
     # Upsert the ride record using PostgREST.
-    body = {
+    body: dict = {
         "id": ride_id,
         "driver_id": driver_id,
         "status": "completed",
         "completed_at": now,
     }
+    if payload.passengerId:
+        body["passenger_id"] = payload.passengerId
 
     with httpx.Client() as client:
         r = client.post(
@@ -550,6 +608,130 @@ def health_supabase():
         }
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+@app.post("/passengers/rate", response_model=RatePassengerResponse)
+def rate_passenger(
+    payload: RatePassengerRequest,
+    authorization: str | None = Header(default=None),
+):
+    """
+    Record one driver's face-rating for the passenger on this ride.
+    Idempotent per (driver_id, ride_id). Cumulative reputation is updated by DB trigger.
+    """
+    _require_config()
+    driver_id = _verify_user_bearer_token(authorization)
+    delta = _face_to_delta(payload.face)
+
+    with httpx.Client() as client:
+        row = _fetch_completed_ride_for_driver(client, driver_id, payload.rideId)
+        passenger_id = row.get("passenger_id")
+        if not passenger_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Ride has no passenger_id; link passenger when completing the ride.",
+            )
+
+        dup = client.get(
+            _rest_url("/passenger_ratings"),
+            params={
+                "driver_id": f"eq.{driver_id}",
+                "ride_id": f"eq.{payload.rideId}",
+                "select": "score_delta,passenger_id",
+                "limit": "1",
+            },
+            headers=_service_headers(),
+            timeout=30.0,
+        )
+        if dup.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"passenger_ratings read failed: {dup.text}")
+        dup_rows = _rest_json_list(dup, "passenger_ratings select")
+        if dup_rows:
+            return RatePassengerResponse(
+                score_delta=int(dup_rows[0]["score_delta"]),
+                passenger_id=str(dup_rows[0]["passenger_id"]),
+                idempotent=True,
+            )
+
+        insert_body = {
+            "ride_id": payload.rideId,
+            "driver_id": driver_id,
+            "passenger_id": passenger_id,
+            "face": payload.face,
+            "score_delta": delta,
+            "comment": payload.comment,
+        }
+        ins = client.post(
+            _rest_url("/passenger_ratings"),
+            headers={**_service_headers(), "Prefer": "return=minimal"},
+            json=insert_body,
+            timeout=30.0,
+        )
+        if ins.status_code in (200, 201):
+            return RatePassengerResponse(
+                score_delta=delta,
+                passenger_id=str(passenger_id),
+                idempotent=False,
+            )
+        if ins.status_code == 409 or "duplicate key" in ins.text.lower() or "unique" in ins.text.lower():
+            dup2 = client.get(
+                _rest_url("/passenger_ratings"),
+                params={
+                    "driver_id": f"eq.{driver_id}",
+                    "ride_id": f"eq.{payload.rideId}",
+                    "select": "score_delta,passenger_id",
+                    "limit": "1",
+                },
+                headers=_service_headers(),
+                timeout=30.0,
+            )
+            if dup2.status_code != 200:
+                raise HTTPException(status_code=502, detail=f"passenger_ratings read failed: {dup2.text}")
+            dr = _rest_json_list(dup2, "passenger_ratings select")
+            if not dr:
+                raise HTTPException(status_code=502, detail="Duplicate insert but no rating row found")
+            return RatePassengerResponse(
+                score_delta=int(dr[0]["score_delta"]),
+                passenger_id=str(dr[0]["passenger_id"]),
+                idempotent=True,
+            )
+        raise HTTPException(status_code=502, detail=f"Insert passenger_ratings failed: {ins.text}")
+
+
+@app.get("/passengers/{passenger_id}/reputation", response_model=PassengerReputationResponse)
+def get_passenger_reputation(
+    passenger_id: str,
+    authorization: str | None = Header(default=None),
+):
+    """
+    Drivers (any signed-in user for now) can fetch aggregate passenger reputation
+    before accepting a trip. Tighten to matched rides only when matching ships.
+    """
+    _require_config()
+    _verify_user_bearer_token(authorization)
+    try:
+        UUID(passenger_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid passenger_id") from e
+
+    with httpx.Client() as client:
+        r = client.get(
+            _rest_url("/passenger_reputation"),
+            params={"passenger_id": f"eq.{passenger_id}", "select": "passenger_id,total_score,rating_count", "limit": "1"},
+            headers=_service_headers(),
+            timeout=30.0,
+        )
+        if r.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"passenger_reputation read failed: {r.text}")
+        rows = _rest_json_list(r, "passenger_reputation select")
+        if not rows:
+            return PassengerReputationResponse(passenger_id=passenger_id, total_score=0, rating_count=0)
+        row = rows[0]
+        return PassengerReputationResponse(
+            passenger_id=str(row["passenger_id"]),
+            total_score=int(row["total_score"]),
+            rating_count=int(row["rating_count"]),
+        )
 
 
 @app.post("/points/rating-bonus", response_model=AwardPointsResponse)

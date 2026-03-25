@@ -1,5 +1,7 @@
 import { Link, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
+
+import { supabase } from "@/lib/supabase";
 import {
   ActivityIndicator,
   FlatList,
@@ -115,12 +117,21 @@ export default function RideRequestScreen() {
         </View>
 
         <Pressable
-          onPress={() =>
+          onPress={async () => {
+            let passengerId = "";
+            if (supabase) {
+              const { data } = await supabase.auth.getSession();
+              passengerId = data.session?.user?.id ?? "";
+            }
             router.push({
               pathname: "/active-trip",
-              params: { driverId: item.id, driverName: item.name },
-            })
-          }
+              params: {
+                driverId: item.id,
+                driverName: item.name,
+                ...(passengerId ? { passengerId } : {}),
+              },
+            });
+          }}
           style={styles.requestButton}
         >
           <Text style={styles.requestButtonText}>Request Ride</Text>

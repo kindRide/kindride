@@ -2,15 +2,20 @@ import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 
+import { shouldPromptPassengerRating } from "@/lib/passenger-rating-prompt";
 import { supabase } from "@/lib/supabase";
 
 export default function ActiveTripScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ driverName?: string }>();
+  const params = useLocalSearchParams<{ driverName?: string; passengerId?: string }>();
   const driverName =
     typeof params.driverName === "string" && params.driverName.length > 0
       ? params.driverName
       : "Aisha Bello";
+  const passengerId =
+    typeof params.passengerId === "string" && params.passengerId.length > 0
+      ? params.passengerId
+      : undefined;
   const [secondsLeft, setSecondsLeft] = useState(120); // 2:00
   // Unique id for THIS trip session (used as `idempotency_key` on the backend).
   // We generate a real UUIDv4 so we can store it in `point_events.ride_id` (uuid column).
@@ -23,6 +28,11 @@ export default function ActiveTripScreen() {
   });
 
   const [isCompletingRide, setIsCompletingRide] = useState(false);
+  const [passengerRep, setPassengerRep] = useState<{
+    total_score: number;
+    rating_count: number;
+  } | null>(null);
+
   const pointsApiUrl = process.env.EXPO_PUBLIC_POINTS_API_URL;
   const ridesCompleteEndpoint = pointsApiUrl
     ? pointsApiUrl.replace("/points/award", "/rides/complete")
@@ -35,6 +45,43 @@ export default function ActiveTripScreen() {
 
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPassengerRep() {
+      if (!passengerId || !pointsApiUrl) {
+        setPassengerRep(null);
+        return;
+      }
+      const sessionResult = supabase ? await supabase.auth.getSession() : null;
+      const token = sessionResult?.data.session?.access_token;
+      if (!token) return;
+      const url = pointsApiUrl.replace(
+        "/points/award",
+        `/passengers/${encodeURIComponent(passengerId)}/reputation`
+      );
+      try {
+        const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (!r.ok || cancelled) return;
+        const j = (await r.json()) as {
+          total_score?: number;
+          rating_count?: number;
+        };
+        if (!cancelled) {
+          setPassengerRep({
+            total_score: Number(j.total_score ?? 0),
+            rating_count: Number(j.rating_count ?? 0),
+          });
+        }
+      } catch {
+        if (!cancelled) setPassengerRep(null);
+      }
+    }
+    loadPassengerRep();
+    return () => {
+      cancelled = true;
+    };
+  }, [passengerId, pointsApiUrl]);
 
   const boardingTimeText = useMemo(() => {
     const mins = Math.floor(secondsLeft / 60);
@@ -65,6 +112,15 @@ export default function ActiveTripScreen() {
         <Text style={styles.driverName}>Driver: {driverName}</Text>
         <Text style={styles.meta}>Car: Toyota Camry - Blue</Text>
         <Text style={styles.meta}>ETA to pickup: 2 mins</Text>
+        {passengerRep && passengerRep.rating_count > 0 ? (
+          <Text style={styles.repText}>
+            Passenger community score: {passengerRep.total_score} · from{" "}
+            {passengerRep.rating_count} driver rating
+            {passengerRep.rating_count === 1 ? "" : "s"}
+          </Text>
+        ) : passengerId ? (
+          <Text style={styles.repHint}>Passenger profile: no ratings yet (or sign in to load).</Text>
+        ) : null}
         <Text style={styles.statusText}>{tripStatus}</Text>
         <Pressable
           onPress={async () => {
@@ -94,6 +150,7 @@ export default function ActiveTripScreen() {
                   rideId,
                   wasZeroDetour: true,
                   distanceMiles: 2.2,
+                  ...(passengerId ? { passengerId } : {}),
                 }),
               });
 
@@ -101,10 +158,20 @@ export default function ActiveTripScreen() {
                 throw new Error(`Ride completion failed (${response.status})`);
               }
 
-              router.push({
-                pathname: "/post-trip-rating",
-                params: { rideId, driverName },
-              });
+              const promptPassenger =
+                Boolean(passengerId) && shouldPromptPassengerRating(rideId);
+
+              if (promptPassenger) {
+                router.push({
+                  pathname: "/rate-passenger",
+                  params: { rideId, passengerId: passengerId!, driverName },
+                });
+              } else {
+                router.push({
+                  pathname: "/post-trip-rating",
+                  params: { rideId, driverName },
+                });
+              }
             } catch (e) {
               const message = e instanceof Error ? e.message : "Ride completion failed.";
               Alert.alert(
@@ -210,6 +277,17 @@ const styles = StyleSheet.create({
     marginTop: 6,
     fontSize: 14,
     color: "#4b587c",
+  },
+  repText: {
+    marginTop: 8,
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#0f766e",
+  },
+  repHint: {
+    marginTop: 8,
+    fontSize: 13,
+    color: "#64748b",
   },
   statusText: {
     marginTop: 10,
