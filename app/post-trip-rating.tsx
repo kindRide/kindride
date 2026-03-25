@@ -1,6 +1,6 @@
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { awardPoints } from "@/lib/points-award";
 
@@ -43,26 +43,38 @@ export default function PostTripRatingScreen() {
     if (rating < 1) return;
     setIsSubmitting(true);
 
-    const result = await awardPoints({
-      rideId,
-      rating,
-      wasZeroDetour: true,
-      distanceMiles: 2.2,
-    });
+    try {
+      const result = await awardPoints({
+        rideId,
+        rating,
+        wasZeroDetour: true,
+        distanceMiles: 2.2,
+      });
 
-    setEarnedPoints(result.pointsEarned);
-    setPointsSource(result.source);
-    setCreditedDriverId(result.source === "backend" ? result.creditedDriverId ?? null : null);
-    setFallbackReason(result.source === "local" ? (result.fallbackReason ?? "network_or_server") : "");
-    setFallbackMessage(
-      result.source === "local" && result.fallbackReason === "unauthorized"
-        ? "You are not signed in on this device. Points shown are local only. Sign in on the Points tab to sync with backend."
-        : result.source === "local"
-          ? "Backend is temporarily unavailable. Points shown are local fallback."
+      setEarnedPoints(result.pointsEarned);
+      setPointsSource(result.source);
+      setCreditedDriverId(
+        result.source === "backend" ? result.creditedDriverId ?? null : null
+      );
+      setFallbackReason(
+        result.source === "local"
+          ? result.fallbackReason ?? "network_or_server"
           : ""
-    );
-    setSubmitted(true);
-    setIsSubmitting(false);
+      );
+      setFallbackMessage(
+        result.source === "local" && result.fallbackReason === "unauthorized"
+          ? "You are not signed in on this device. Points are local only. Sign in on the Points tab to sync with backend."
+          : result.source === "local"
+            ? "Backend is temporarily unavailable. Points shown are local fallback."
+            : ""
+      );
+      setSubmitted(true);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Points award failed.";
+      Alert.alert("Could not award points", message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

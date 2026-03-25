@@ -1,6 +1,6 @@
 # KindRide - Project Status
 
-Last updated: 2026-03-25 (Week 2 Session 9)
+Last updated: 2026-03-25 (Week 2 Session 12)
 Owner: Oluwafemi Adebayo Adeyemi
 
 ## Current Build State
@@ -17,6 +17,7 @@ Week 2 Session 8 is complete.
 Week 2 Session 9 is complete.
 Week 2 Session 10 is complete.
 Week 2 Session 11 is complete.
+Week 2 Session 12 is complete.
 
 Working app flow (phone-tested):
 1. Home screen (`app/(tabs)/index.tsx`)
@@ -126,9 +127,9 @@ Week 2:
   - Fix driver display wiring (Ride Request → Active Trip → Post Trip Rating)
   - Show the `credited_driver_id` returned by the backend to remove confusion about which account received points
 
-- Session 12 target:
-  - Validate ride completion/ownership server-side when the `rides` table exists
-  - Remove/disable local fallback for production mode so all awards require backend success
+- Session 12 completed:
+  - Added `EXPO_PUBLIC_POINTS_REQUIRE_BACKEND=true` toggle to disable local fallback and surface backend errors
+  - Kept the next focus: validate ride completion/ownership server-side when the `rides` table exists
 
 ## Security-First Checklist (Always On)
 
@@ -156,4 +157,4 @@ Operations:
 
 ## Resume Prompt (Copy/Paste for Next Session)
 
-"We are continuing KindRide. Read PROJECT_STATUS.md first. Start Week 2 Session 12: validate ride completion/ownership server-side when the rides table exists, then disable local fallback so backend awards are required."
+"We are continuing KindRide. Read PROJECT_STATUS.md first. Start Week 2 next session: add a real `rides` table and validate ride completion/ownership server-side before points award."

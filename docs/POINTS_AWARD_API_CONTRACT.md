@@ -26,7 +26,8 @@ This is the backend contract that the mobile app now expects for secure point aw
 {
   "points_earned": 15,
   "source": "backend",
-  "idempotent": false
+  "idempotent": false,
+  "credited_driver_id": "a6cf26a4-2a23-4dc0-a2c0-fe1d355f198b"
 }
 ```
 
@@ -42,5 +43,5 @@ This is the backend contract that the mobile app now expects for secure point aw
 
 ## App Behavior
 
-- If endpoint is not configured or fails, app falls back to local points calculation.
-- Fallback keeps UI responsive during backend rollout.
+- By default, if endpoint is not configured or fails, app falls back to local points calculation (so the UI stays responsive).
+- If you set `EXPO_PUBLIC_POINTS_REQUIRE_BACKEND=true` in `KindRide/.env`, the app will NOT use local fallback. Instead, it will show an error when backend awarding fails (unauthorized, network/server error, or timeout).

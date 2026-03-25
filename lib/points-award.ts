@@ -23,8 +23,13 @@ const calcLocalPoints = (rating: number) => {
 
 export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsResult> {
   const endpoint = process.env.EXPO_PUBLIC_POINTS_API_URL;
+  const requireBackend =
+    process.env.EXPO_PUBLIC_POINTS_REQUIRE_BACKEND === "true";
 
   if (!endpoint) {
+    if (requireBackend) {
+      throw new Error("Points API is not configured (EXPO_PUBLIC_POINTS_API_URL missing).");
+    }
     return {
       pointsEarned: calcLocalPoints(input.rating),
       source: "local",
@@ -51,6 +56,11 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
     }).finally(() => clearTimeout(timeoutId));
 
     if (response.status === 401) {
+      if (requireBackend) {
+        throw new Error(
+          "Unauthorized: please sign in on the Points tab so backend can award points."
+        );
+      }
       return {
         pointsEarned: calcLocalPoints(input.rating),
         source: "local",
@@ -77,7 +87,12 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
       source: "backend",
       creditedDriverId: data.credited_driver_id,
     };
-  } catch {
+  } catch (err) {
+    if (requireBackend) {
+      const message =
+        err instanceof Error ? err.message : "Backend points request failed.";
+      throw new Error(message);
+    }
     return {
       pointsEarned: calcLocalPoints(input.rating),
       source: "local",
