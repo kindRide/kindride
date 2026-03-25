@@ -141,6 +141,8 @@ Week 2:
     - zero-detour multiplier = 1.5x
     - 5-star rating adds +5 after multiplier
   - Kept local fallback formula consistent for debugging alignment
+  - Founder note: `distanceMiles` means the passenger's trip distance (pickup -> dropoff) used for the distance points bonus.
+    In the current MVP it is still mocked in `app/post-trip-rating.tsx` until real trip distance is wired from the ride completion flow.
 
 ## Security-First Checklist (Always On)
 
