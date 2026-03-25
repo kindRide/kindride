@@ -15,6 +15,8 @@ Week 2 Session 6 is complete.
 Week 2 Session 7 is complete.
 Week 2 Session 8 is complete.
 Week 2 Session 9 is complete.
+Week 2 Session 10 is complete.
+Week 2 Session 11 is complete.
 
 Working app flow (phone-tested):
 1. Home screen (`app/(tabs)/index.tsx`)
@@ -114,11 +116,17 @@ Week 2:
   - Validated end-to-end mobile flow: phone uses Backend API when signed in; local fallback when unauthorized
   - Added explicit fallback reasons in app UI to reduce debugging guesswork
   - Added backend `/health/supabase` endpoint and clearer config error messages for `.env` issues
-- Session 9 completed (this hour):
+- Session 9 completed:
   - Pass real `rideId` from trip flow into post-trip rating (backend idempotency uses it)
   - Keep local fallback for now (so you can still debug during backend rollout)
+- Session 10 completed:
+  - Generate a real UUIDv4 `rideId` and store it in `point_events.ride_id` (UUID column)
+  - Backend writes remain idempotent via `idempotency_key = rideId`
+- Session 11 completed:
+  - Fix driver display wiring (Ride Request → Active Trip → Post Trip Rating)
+  - Show the `credited_driver_id` returned by the backend to remove confusion about which account received points
 
-- Session 10 target:
+- Session 12 target:
   - Validate ride completion/ownership server-side when the `rides` table exists
   - Remove/disable local fallback for production mode so all awards require backend success
 
@@ -148,4 +156,4 @@ Operations:
 
 ## Resume Prompt (Copy/Paste for Next Session)
 
-"We are continuing KindRide. Read PROJECT_STATUS.md first. Start Week 2 Session 9: pass real rideId through trip flow and enforce server-side ride completion validation before points award."
+"We are continuing KindRide. Read PROJECT_STATUS.md first. Start Week 2 Session 12: validate ride completion/ownership server-side when the rides table exists, then disable local fallback so backend awards are required."
