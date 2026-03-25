@@ -310,7 +310,9 @@ def _try_insert_award_event(
     """
     body = {
         "driver_id": driver_id,
-        "ride_id": None,
+        # `ride_id` is stored as uuid in Supabase.
+        # The app generates UUIDv4 so this write stays valid.
+        "ride_id": ride_id,
         "action": "TRIP_POINTS_AWARDED",
         "points_change": points,
         "idempotency_key": ride_id,

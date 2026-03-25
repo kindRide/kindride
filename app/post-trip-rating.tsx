@@ -7,7 +7,21 @@ import { awardPoints } from "@/lib/points-award";
 export default function PostTripRatingScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ rideId?: string }>();
-  const rideId = typeof params.rideId === "string" && params.rideId.length > 0 ? params.rideId : "demo-ride-001";
+
+  // Fallback rideId if you land on this screen directly (should not happen often).
+  // Must be UUIDv4 compatible because backend stores it into `point_events.ride_id` (uuid).
+  const fallbackRideId = useState(() => {
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const r = Math.random() * 16;
+      const v = c === "x" ? r : (r & 0x3) | 0x8;
+      return Math.floor(v).toString(16);
+    });
+  })[0];
+
+  const rideId =
+    typeof params.rideId === "string" && params.rideId.length > 0
+      ? params.rideId
+      : fallbackRideId;
   const currentUserRole: "driver" | "passenger" = "driver";
   const [rating, setRating] = useState(0);
   const [review, setReview] = useState("");

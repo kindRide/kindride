@@ -6,9 +6,13 @@ export default function ActiveTripScreen() {
   const router = useRouter();
   const [secondsLeft, setSecondsLeft] = useState(120); // 2:00
   // Unique id for THIS trip session (used as `idempotency_key` on the backend).
+  // We generate a real UUIDv4 so we can store it in `point_events.ride_id` (uuid column).
   const [rideId] = useState(() => {
-    const rand = Math.random().toString(16).slice(2);
-    return `ride-${Date.now()}-${rand}`;
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const r = Math.random() * 16;
+      const v = c === "x" ? r : (r & 0x3) | 0x8;
+      return Math.floor(v).toString(16);
+    });
   });
 
   useEffect(() => {
