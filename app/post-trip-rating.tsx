@@ -36,6 +36,7 @@ export default function PostTripRatingScreen() {
   const [creditedDriverId, setCreditedDriverId] = useState<string | null>(null);
   const [fallbackReason, setFallbackReason] = useState<"" | "unauthorized" | "network_or_server">("");
   const [fallbackMessage, setFallbackMessage] = useState("");
+  const [backendErrorDetail, setBackendErrorDetail] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async () => {
@@ -60,6 +61,11 @@ export default function PostTripRatingScreen() {
         result.source === "local"
           ? result.fallbackReason ?? "network_or_server"
           : ""
+      );
+      setBackendErrorDetail(
+        result.source === "local" && result.fallbackReason === "network_or_server"
+          ? result.backendErrorDetail ?? null
+          : null
       );
       setFallbackMessage(
         result.source === "local" && result.fallbackReason === "unauthorized"
@@ -123,6 +129,11 @@ export default function PostTripRatingScreen() {
               </Text>
               {fallbackMessage ? (
                 <Text style={styles.fallbackMessage}>{fallbackMessage}</Text>
+              ) : null}
+              {backendErrorDetail && pointsSource === "local" ? (
+                <Text style={styles.backendErrorDetail}>
+                  Details: {backendErrorDetail}
+                </Text>
               ) : null}
               {pointsSource === "backend" && creditedDriverId ? (
                 <Text style={styles.creditText}>
@@ -246,6 +257,13 @@ const styles = StyleSheet.create({
   fallbackMessage: {
     color: "#9a3412",
     fontSize: 12,
+    textAlign: "center",
+    maxWidth: 320,
+  },
+  backendErrorDetail: {
+    color: "#7c2d12",
+    fontSize: 11,
+    marginTop: 4,
     textAlign: "center",
     maxWidth: 320,
   },

@@ -13,6 +13,7 @@ type AwardPointsResult = {
   source: "backend" | "local";
   fallbackReason?: "unauthorized" | "network_or_server";
   creditedDriverId?: string;
+  backendErrorDetail?: string;
 };
 
 const calcLocalPoints = (rating: number) => {
@@ -34,6 +35,7 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
       pointsEarned: calcLocalPoints(input.rating),
       source: "local",
       fallbackReason: "network_or_server",
+      backendErrorDetail: undefined,
     };
   }
 
@@ -65,11 +67,21 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
         pointsEarned: calcLocalPoints(input.rating),
         source: "local",
         fallbackReason: "unauthorized",
+        backendErrorDetail: undefined,
       };
     }
 
     if (!response.ok) {
-      throw new Error(`Backend responded ${response.status}`);
+      const raw = await response.text().catch(() => "");
+      let detail = raw || `Backend responded ${response.status}`;
+      try {
+        const parsed = JSON.parse(raw);
+        detail =
+          parsed?.detail || parsed?.message || parsed?.error || detail;
+      } catch {
+        // keep raw text as detail
+      }
+      throw new Error(detail);
     }
 
     const data = (await response.json()) as {
@@ -86,6 +98,7 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
       pointsEarned,
       source: "backend",
       creditedDriverId: data.credited_driver_id,
+      backendErrorDetail: undefined,
     };
   } catch (err) {
     if (requireBackend) {
@@ -93,10 +106,12 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
         err instanceof Error ? err.message : "Backend points request failed.";
       throw new Error(message);
     }
+    const message = err instanceof Error ? err.message : "Backend points request failed.";
     return {
       pointsEarned: calcLocalPoints(input.rating),
       source: "local",
       fallbackReason: "network_or_server",
+      backendErrorDetail: message,
     };
   }
 }

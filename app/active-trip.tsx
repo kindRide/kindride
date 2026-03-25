@@ -1,6 +1,8 @@
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+
+import { supabase } from "@/lib/supabase";
 
 export default function ActiveTripScreen() {
   const router = useRouter();
@@ -19,6 +21,12 @@ export default function ActiveTripScreen() {
       return Math.floor(v).toString(16);
     });
   });
+
+  const [isCompletingRide, setIsCompletingRide] = useState(false);
+  const pointsApiUrl = process.env.EXPO_PUBLIC_POINTS_API_URL;
+  const ridesCompleteEndpoint = pointsApiUrl
+    ? pointsApiUrl.replace("/points/award", "/rides/complete")
+    : undefined;
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -59,15 +67,57 @@ export default function ActiveTripScreen() {
         <Text style={styles.meta}>ETA to pickup: 2 mins</Text>
         <Text style={styles.statusText}>{tripStatus}</Text>
         <Pressable
-          onPress={() =>
-            router.push({
-              pathname: "/post-trip-rating",
-              params: { rideId, driverName },
-            })
-          }
+          onPress={async () => {
+            if (isCompletingRide) return;
+            if (!ridesCompleteEndpoint) {
+              Alert.alert(
+                "Backend not configured",
+                "EXPO_PUBLIC_POINTS_API_URL is missing, so we cannot mark the ride as completed."
+              );
+              return;
+            }
+
+            try {
+              setIsCompletingRide(true);
+              const sessionResult = supabase
+                ? await supabase.auth.getSession()
+                : null;
+              const accessToken = sessionResult?.data.session?.access_token;
+
+              const response = await fetch(ridesCompleteEndpoint, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+                },
+                body: JSON.stringify({ rideId }),
+              });
+
+              if (!response.ok) {
+                throw new Error(`Ride completion failed (${response.status})`);
+              }
+
+              router.push({
+                pathname: "/post-trip-rating",
+                params: { rideId, driverName },
+              });
+            } catch (e) {
+              const message = e instanceof Error ? e.message : "Ride completion failed.";
+              Alert.alert(
+                "Could not complete ride",
+                message +
+                  "\n\nIf you see 401, sign in on the Points tab before testing."
+              );
+            } finally {
+              setIsCompletingRide(false);
+            }
+          }}
+          disabled={isCompletingRide}
           style={styles.endTripButton}
         >
-          <Text style={styles.endTripButtonText}>End Trip</Text>
+          <Text style={styles.endTripButtonText}>
+            {isCompletingRide ? "Completing..." : "End Trip"}
+          </Text>
         </Pressable>
       </View>
 
