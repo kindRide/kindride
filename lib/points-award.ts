@@ -12,6 +12,7 @@ type AwardPointsResult = {
   pointsEarned: number;
   source: "backend" | "local";
   fallbackReason?: "unauthorized" | "network_or_server";
+  creditedDriverId?: string;
 };
 
 const calcLocalPoints = (rating: number) => {
@@ -36,7 +37,9 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
     const accessToken = sessionResult?.data.session?.access_token;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 25_000);
+    // First-time JWT verification via JWKS can be slightly slow; give the backend
+    // enough time to respond before we fall back to local points.
+    const timeoutId = setTimeout(() => controller.abort(), 45_000);
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
@@ -59,14 +62,21 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
       throw new Error(`Backend responded ${response.status}`);
     }
 
-    const data = (await response.json()) as { points_earned?: number };
+    const data = (await response.json()) as {
+      points_earned?: number;
+      credited_driver_id?: string;
+    };
     const pointsEarned = Number(data.points_earned ?? 0);
 
     if (!Number.isFinite(pointsEarned) || pointsEarned < 0) {
       throw new Error("Invalid points payload");
     }
 
-    return { pointsEarned, source: "backend" };
+    return {
+      pointsEarned,
+      source: "backend",
+      creditedDriverId: data.credited_driver_id,
+    };
   } catch {
     return {
       pointsEarned: calcLocalPoints(input.rating),

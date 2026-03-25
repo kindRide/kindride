@@ -115,7 +115,12 @@ export default function RideRequestScreen() {
         </View>
 
         <Pressable
-          onPress={() => router.push("/active-trip")}
+          onPress={() =>
+            router.push({
+              pathname: "/active-trip",
+              params: { driverId: item.id, driverName: item.name },
+            })
+          }
           style={styles.requestButton}
         >
           <Text style={styles.requestButtonText}>Request Ride</Text>

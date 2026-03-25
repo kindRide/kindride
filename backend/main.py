@@ -89,6 +89,10 @@ logger = logging.getLogger("kindride.api")
 
 app = FastAPI(title="KindRide Points API", version="0.2.0")
 
+# Cache JWKS client so the first request doesn't repeatedly re-instantiate it.
+# This reduces latency when JWT verification happens via RS256.
+_JWKS_CLIENT: PyJWKClient | None = None
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -111,6 +115,7 @@ class AwardPointsRequest(BaseModel):
 class AwardPointsResponse(BaseModel):
     points_earned: int
     source: str
+    credited_driver_id: str
     idempotent: bool = False
 
 
@@ -193,8 +198,10 @@ def _verify_user_bearer_token(authorization: str | None) -> str:
     if decoded is None and SUPABASE_URL:
         try:
             jwks_url = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
-            jwks_client = PyJWKClient(jwks_url, cache_keys=True)
-            signing_key = jwks_client.get_signing_key_from_jwt(token)
+            global _JWKS_CLIENT
+            if _JWKS_CLIENT is None:
+                _JWKS_CLIENT = PyJWKClient(jwks_url, cache_keys=True)
+            signing_key = _JWKS_CLIENT.get_signing_key_from_jwt(token)
             try:
                 decoded = jwt.decode(
                     token,
@@ -399,7 +406,12 @@ def award_points(
         with httpx.Client() as client:
             existing = _fetch_existing_award(client, driver_id, payload.rideId)
             if existing is not None:
-                return AwardPointsResponse(points_earned=existing, source="backend", idempotent=True)
+                return AwardPointsResponse(
+                    points_earned=existing,
+                    source="backend",
+                    credited_driver_id=driver_id,
+                    idempotent=True,
+                )
 
             _ensure_driver_points_row(client, driver_id)
 
@@ -410,13 +422,23 @@ def award_points(
                 concurrent = _fetch_existing_award(client, driver_id, payload.rideId)
                 if concurrent is None:
                     raise HTTPException(status_code=502, detail="Duplicate insert but no award row found")
-                return AwardPointsResponse(points_earned=concurrent, source="backend", idempotent=True)
+                return AwardPointsResponse(
+                    points_earned=concurrent,
+                    source="backend",
+                    credited_driver_id=driver_id,
+                    idempotent=True,
+                )
 
             before = _fetch_total_points(client, driver_id)
             new_total = before + points_to_add
             _update_points_balance(client, driver_id, new_total)
 
-            return AwardPointsResponse(points_earned=points_to_add, source="backend", idempotent=False)
+            return AwardPointsResponse(
+                points_earned=points_to_add,
+                source="backend",
+                credited_driver_id=driver_id,
+                idempotent=False,
+            )
     except HTTPException:
         raise
     except Exception as exc:

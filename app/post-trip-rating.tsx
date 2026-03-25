@@ -6,7 +6,7 @@ import { awardPoints } from "@/lib/points-award";
 
 export default function PostTripRatingScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ rideId?: string }>();
+  const params = useLocalSearchParams<{ rideId?: string; driverName?: string }>();
 
   // Fallback rideId if you land on this screen directly (should not happen often).
   // Must be UUIDv4 compatible because backend stores it into `point_events.ride_id` (uuid).
@@ -22,12 +22,18 @@ export default function PostTripRatingScreen() {
     typeof params.rideId === "string" && params.rideId.length > 0
       ? params.rideId
       : fallbackRideId;
+
+  const driverName =
+    typeof params.driverName === "string" && params.driverName.length > 0
+      ? params.driverName
+      : "Aisha Bello";
   const currentUserRole: "driver" | "passenger" = "driver";
   const [rating, setRating] = useState(0);
   const [review, setReview] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [earnedPoints, setEarnedPoints] = useState(0);
   const [pointsSource, setPointsSource] = useState<"backend" | "local">("local");
+  const [creditedDriverId, setCreditedDriverId] = useState<string | null>(null);
   const [fallbackReason, setFallbackReason] = useState<"" | "unauthorized" | "network_or_server">("");
   const [fallbackMessage, setFallbackMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -46,6 +52,7 @@ export default function PostTripRatingScreen() {
 
     setEarnedPoints(result.pointsEarned);
     setPointsSource(result.source);
+    setCreditedDriverId(result.source === "backend" ? result.creditedDriverId ?? null : null);
     setFallbackReason(result.source === "local" ? (result.fallbackReason ?? "network_or_server") : "");
     setFallbackMessage(
       result.source === "local" && result.fallbackReason === "unauthorized"
@@ -61,7 +68,7 @@ export default function PostTripRatingScreen() {
   return (
     <View style={styles.screen}>
       <Text style={styles.title}>Rate Your Trip</Text>
-      <Text style={styles.subtitle}>How was your ride with Aisha Bello?</Text>
+      <Text style={styles.subtitle}>How was your ride with {driverName}?</Text>
 
       <View style={styles.starsRow}>
         {[1, 2, 3, 4, 5].map((star) => (
@@ -104,6 +111,11 @@ export default function PostTripRatingScreen() {
               </Text>
               {fallbackMessage ? (
                 <Text style={styles.fallbackMessage}>{fallbackMessage}</Text>
+              ) : null}
+              {pointsSource === "backend" && creditedDriverId ? (
+                <Text style={styles.creditText}>
+                  Credited to driver id: ...{creditedDriverId.slice(-6)}
+                </Text>
               ) : null}
               <Pressable
                 onPress={() =>
@@ -224,6 +236,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: "center",
     maxWidth: 320,
+  },
+  creditText: {
+    color: "#4b587c",
+    fontSize: 12,
+    marginTop: 6,
+    textAlign: "center",
   },
   pointsButton: {
     backgroundColor: "#1d4ed8",

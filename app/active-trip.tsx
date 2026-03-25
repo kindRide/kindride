@@ -1,9 +1,14 @@
-import { Link, useRouter } from "expo-router";
+import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 export default function ActiveTripScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ driverName?: string }>();
+  const driverName =
+    typeof params.driverName === "string" && params.driverName.length > 0
+      ? params.driverName
+      : "Aisha Bello";
   const [secondsLeft, setSecondsLeft] = useState(120); // 2:00
   // Unique id for THIS trip session (used as `idempotency_key` on the backend).
   // We generate a real UUIDv4 so we can store it in `point_events.ride_id` (uuid column).
@@ -49,7 +54,7 @@ export default function ActiveTripScreen() {
       </View>
 
       <View style={styles.bottomCard}>
-        <Text style={styles.driverName}>Driver: Aisha Bello</Text>
+        <Text style={styles.driverName}>Driver: {driverName}</Text>
         <Text style={styles.meta}>Car: Toyota Camry - Blue</Text>
         <Text style={styles.meta}>ETA to pickup: 2 mins</Text>
         <Text style={styles.statusText}>{tripStatus}</Text>
@@ -57,7 +62,7 @@ export default function ActiveTripScreen() {
           onPress={() =>
             router.push({
               pathname: "/post-trip-rating",
-              params: { rideId },
+              params: { rideId, driverName },
             })
           }
           style={styles.endTripButton}
