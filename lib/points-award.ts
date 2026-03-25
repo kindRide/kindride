@@ -11,6 +11,7 @@ type AwardPointsInput = {
 type AwardPointsResult = {
   pointsEarned: number;
   source: "backend" | "local";
+  fallbackReason?: "unauthorized" | "network_or_server";
 };
 
 const calcLocalPoints = (rating: number) => {
@@ -26,6 +27,7 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
     return {
       pointsEarned: calcLocalPoints(input.rating),
       source: "local",
+      fallbackReason: "network_or_server",
     };
   }
 
@@ -33,6 +35,8 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
     const sessionResult = supabase ? await supabase.auth.getSession() : null;
     const accessToken = sessionResult?.data.session?.access_token;
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25_000);
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
@@ -40,7 +44,16 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
         ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       },
       body: JSON.stringify(input),
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeoutId));
+
+    if (response.status === 401) {
+      return {
+        pointsEarned: calcLocalPoints(input.rating),
+        source: "local",
+        fallbackReason: "unauthorized",
+      };
+    }
 
     if (!response.ok) {
       throw new Error(`Backend responded ${response.status}`);
@@ -58,6 +71,7 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
     return {
       pointsEarned: calcLocalPoints(input.rating),
       source: "local",
+      fallbackReason: "network_or_server",
     };
   }
 }

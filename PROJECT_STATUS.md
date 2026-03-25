@@ -1,6 +1,6 @@
 # KindRide - Project Status
 
-Last updated: 2026-03-24 (Week 2 Session 7)
+Last updated: 2026-03-25 (Week 2 Session 8)
 Owner: Oluwafemi Adebayo Adeyemi
 
 ## Current Build State
@@ -13,6 +13,7 @@ Week 2 Session 4 is complete.
 Week 2 Session 5 is complete.
 Week 2 Session 6 is complete.
 Week 2 Session 7 is complete.
+Week 2 Session 8 is complete.
 
 Working app flow (phone-tested):
 1. Home screen (`app/(tabs)/index.tsx`)
@@ -55,6 +56,10 @@ Working app flow (phone-tested):
   - Supabase JWT verification, server-side scoring, service-role writes
   - `point_events` insert + `points` balance/tier update; duplicate `rideId` returns `idempotent: true`
   - SQL migration `supabase/points_idempotency.sql`; `backend/.env.example` and run guide (`backend/README.md`)
+- Founder-friendly fallback diagnostics:
+  - Post-trip screen now explains why local fallback happened (not signed in vs backend/network issue)
+  - Points tab now displays the same fallback reason so device-specific auth issues are obvious
+  - Backend has `/health/supabase` diagnostic to verify service-role access quickly
 
 ## Not Implemented Yet (Planned)
 
@@ -104,8 +109,13 @@ Week 2:
   - Service role writes: `point_events` (+ `idempotency_key`), `points` total + tier
   - Race-safe idempotency: only the request that wins the insert updates the balance
   - Migration `supabase/points_idempotency.sql`; founder-oriented comments in `main.py`
-- Session 8 target:
+- Session 8 completed: yes
+  - Validated end-to-end mobile flow: phone uses Backend API when signed in; local fallback when unauthorized
+  - Added explicit fallback reasons in app UI to reduce debugging guesswork
+  - Added backend `/health/supabase` endpoint and clearer config error messages for `.env` issues
+- Session 9 target:
   - Pass real `rideId` from trip flow; validate ride completion server-side when `rides` exists
+  - Remove client-side local fallback for production mode and enforce authenticated award path
 
 ## Security-First Checklist (Always On)
 
@@ -133,4 +143,4 @@ Operations:
 
 ## Resume Prompt (Copy/Paste for Next Session)
 
-"We are continuing KindRide. Read PROJECT_STATUS.md first. Start Week 2 Session 8: real ride context in award payload and server-side ride validation when the rides table exists."
+"We are continuing KindRide. Read PROJECT_STATUS.md first. Start Week 2 Session 9: pass real rideId through trip flow and enforce server-side ride completion validation before points award."

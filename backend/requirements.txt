@@ -3,4 +3,5 @@ uvicorn
 pydantic
 httpx
 PyJWT
+cryptography
 python-dotenv

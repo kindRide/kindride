@@ -60,22 +60,32 @@ See `backend/.env.example`. Copy to `backend/.env` and fill values from Supabase
 
 from __future__ import annotations
 
+import logging
 import os
+import sys
+import traceback
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 import jwt
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from jwt import PyJWKClient
 from pydantic import BaseModel, Field
 
+# Always load .env next to this file (Uvicorn's working directory may be elsewhere).
+# This file is NOT the same as KindRide/.env used by Expo — you need both.
+_BACKEND_DIR = Path(__file__).resolve().parent
+_ENV_PATH = _BACKEND_DIR / ".env"
+load_dotenv(_ENV_PATH)
 
-load_dotenv()
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "").strip()
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
+logger = logging.getLogger("kindride.api")
 
 app = FastAPI(title="KindRide Points API", version="0.2.0")
 
@@ -105,19 +115,53 @@ class AwardPointsResponse(BaseModel):
 
 
 def _require_config() -> None:
-    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY or not SUPABASE_JWT_SECRET:
+    """JWT secret is optional if you only verify via JWKS (RS256); URL + service role are required."""
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        exists = _ENV_PATH.exists()
         raise HTTPException(
             status_code=500,
-            detail="Server missing SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, or SUPABASE_JWT_SECRET",
+            detail=(
+                "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY. "
+                f"Expected a file at: {_ENV_PATH} (file exists: {exists}). "
+                "Copy backend/.env.example to backend/.env and fill in values. "
+                "Note: KindRide/.env is only for Expo — the Python API reads backend/.env only."
+            ),
         )
 
 
+def _rest_json_list(r: httpx.Response, context: str) -> list:
+    """Parse PostgREST JSON array; avoid raw 500s on empty or HTML error bodies."""
+    try:
+        data = r.json()
+    except Exception:
+        raise HTTPException(
+            status_code=502,
+            detail=f"{context}: non-JSON body (status {r.status_code}): {r.text[:1200]}",
+        ) from None
+    if not isinstance(data, list):
+        raise HTTPException(
+            status_code=502,
+            detail=f"{context}: expected JSON array, got {type(data).__name__}: {str(data)[:500]}",
+        )
+    return data
+
+
 def _service_headers() -> dict[str, str]:
-    """Headers for Supabase PostgREST. Service role bypasses RLS."""
+    """
+    Headers for Supabase PostgREST. Service role bypasses RLS.
+
+    Use the legacy `service_role` JWT (`eyJ...`) from Dashboard → API → *Legacy* API keys
+    if `sb_secret_...` returns 401 from PostgREST (some clients work best with the JWT).
+
+    User-Agent avoids Supabase treating the request like a browser (secret keys are
+    blocked for browser User-Agents).
+    """
     return {
         "apikey": SUPABASE_SERVICE_ROLE_KEY,
         "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
         "Content-Type": "application/json",
+        "User-Agent": "KindRideBackend/1.0 (server)",
+        "Accept": "application/json",
     }
 
 
@@ -125,19 +169,51 @@ def _verify_user_bearer_token(authorization: str | None) -> str:
     """
     Returns Supabase auth user id (UUID string) from a valid access JWT.
 
-    Supabase access tokens are HS256-signed with your project's JWT secret.
+    Supabase may sign session JWTs with either:
+    - HS256 + legacy JWT secret (dashboard → JWT Keys → legacy secret), or
+    - RS256 / asymmetric keys (JWT Signing Keys). Those are verified via JWKS.
     """
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
-    try:
-        decoded = jwt.decode(
-            token,
-            SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            audience="authenticated",
-        )
-    except jwt.PyJWTError:
+
+    decoded: dict | None = None
+
+    if SUPABASE_JWT_SECRET:
+        try:
+            decoded = jwt.decode(
+                token,
+                SUPABASE_JWT_SECRET,
+                algorithms=["HS256"],
+                audience="authenticated",
+            )
+        except jwt.PyJWTError:
+            decoded = None
+
+    if decoded is None and SUPABASE_URL:
+        try:
+            jwks_url = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+            jwks_client = PyJWKClient(jwks_url, cache_keys=True)
+            signing_key = jwks_client.get_signing_key_from_jwt(token)
+            try:
+                decoded = jwt.decode(
+                    token,
+                    signing_key.key,
+                    algorithms=["RS256", "ES256"],
+                    audience="authenticated",
+                    issuer=f"{SUPABASE_URL}/auth/v1",
+                )
+            except jwt.PyJWTError:
+                decoded = jwt.decode(
+                    token,
+                    signing_key.key,
+                    algorithms=["RS256", "ES256"],
+                    audience="authenticated",
+                )
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    if decoded is None:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     sub = decoded.get("sub")
@@ -191,7 +267,7 @@ def _fetch_existing_award(client: httpx.Client, driver_id: str, ride_id: str) ->
     r = client.get(_rest_url("/point_events"), params=params, headers=_service_headers(), timeout=30.0)
     if r.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Supabase read failed: {r.text}")
-    rows = r.json()
+    rows = _rest_json_list(r, "point_events select")
     if not rows:
         return None
     return int(rows[0]["points_change"])
@@ -214,7 +290,7 @@ def _fetch_total_points(client: httpx.Client, driver_id: str) -> int:
     r = client.get(_rest_url("/points"), params=params, headers=_service_headers(), timeout=30.0)
     if r.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Could not read points: {r.text}")
-    rows = r.json()
+    rows = _rest_json_list(r, "points select")
     if not rows:
         return 0
     return int(rows[0]["total_points"])
@@ -278,6 +354,33 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/health/supabase")
+def health_supabase():
+    """
+    Quick check that PostgREST accepts your service role key.
+    Open in a browser while Uvicorn is running: http://127.0.0.1:8000/health/supabase
+    """
+    _require_config()
+    url = f"{SUPABASE_URL}/rest/v1/points?select=driver_id&limit=1"
+    try:
+        with httpx.Client() as client:
+            r = client.get(url, headers=_service_headers(), timeout=15.0)
+        return {
+            "ok": r.status_code == 200,
+            "postgrest_http_status": r.status_code,
+            "hint": (
+                "If status is 401, open Supabase → Settings → API → Legacy API keys "
+                "and paste the long `service_role` JWT (starts with eyJ) into "
+                "SUPABASE_SERVICE_ROLE_KEY instead of sb_secret_..."
+                if r.status_code == 401
+                else None
+            ),
+            "body_preview": r.text[:400],
+        }
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
 @app.post("/points/award", response_model=AwardPointsResponse)
 def award_points(
     payload: AwardPointsRequest,
@@ -286,28 +389,40 @@ def award_points(
     """
     Awards points for a completed trip, once per (driver, rideId), verified by JWT.
     """
-    _require_config()
-    driver_id = _verify_user_bearer_token(authorization)
-    points_to_add = _compute_points(payload.rating, payload.wasZeroDetour, payload.distanceMiles)
+    try:
+        _require_config()
+        driver_id = _verify_user_bearer_token(authorization)
+        points_to_add = _compute_points(payload.rating, payload.wasZeroDetour, payload.distanceMiles)
 
-    with httpx.Client() as client:
-        existing = _fetch_existing_award(client, driver_id, payload.rideId)
-        if existing is not None:
-            return AwardPointsResponse(points_earned=existing, source="backend", idempotent=True)
+        with httpx.Client() as client:
+            existing = _fetch_existing_award(client, driver_id, payload.rideId)
+            if existing is not None:
+                return AwardPointsResponse(points_earned=existing, source="backend", idempotent=True)
 
-        _ensure_driver_points_row(client, driver_id)
+            _ensure_driver_points_row(client, driver_id)
 
-        inserted = _try_insert_award_event(
-            client, driver_id, payload.rideId, points_to_add, payload
-        )
-        if not inserted:
-            concurrent = _fetch_existing_award(client, driver_id, payload.rideId)
-            if concurrent is None:
-                raise HTTPException(status_code=502, detail="Duplicate insert but no award row found")
-            return AwardPointsResponse(points_earned=concurrent, source="backend", idempotent=True)
+            inserted = _try_insert_award_event(
+                client, driver_id, payload.rideId, points_to_add, payload
+            )
+            if not inserted:
+                concurrent = _fetch_existing_award(client, driver_id, payload.rideId)
+                if concurrent is None:
+                    raise HTTPException(status_code=502, detail="Duplicate insert but no award row found")
+                return AwardPointsResponse(points_earned=concurrent, source="backend", idempotent=True)
 
-        before = _fetch_total_points(client, driver_id)
-        new_total = before + points_to_add
-        _update_points_balance(client, driver_id, new_total)
+            before = _fetch_total_points(client, driver_id)
+            new_total = before + points_to_add
+            _update_points_balance(client, driver_id, new_total)
 
-        return AwardPointsResponse(points_earned=points_to_add, source="backend", idempotent=False)
+            return AwardPointsResponse(points_earned=points_to_add, source="backend", idempotent=False)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        tb = traceback.format_exc()
+        logger.error("award_points failed: %s", exc)
+        logger.error(tb)
+        print(tb, file=sys.stderr, flush=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"{type(exc).__name__}: {exc!s}. Check Uvicorn terminal for full traceback.",
+        ) from exc

@@ -19,7 +19,12 @@ type EventItem = {
 };
 
 export default function PointsScreen() {
-  const params = useLocalSearchParams<{ earned?: string; role?: string }>();
+  const params = useLocalSearchParams<{
+    earned?: string;
+    role?: string;
+    source?: "backend" | "local";
+    fallbackReason?: "unauthorized" | "network_or_server";
+  }>();
   const earnedValue = Number(params.earned ?? "0");
   const earnedPoints = Number.isFinite(earnedValue) ? earnedValue : 0;
   const userRole = params.role === "passenger" ? "passenger" : "driver";
@@ -147,10 +152,22 @@ export default function PointsScreen() {
       : "Starter local points screen (no database yet)";
   }, [dataSource, isLoading, sessionUserId]);
 
+  const fallbackNotice = useMemo(() => {
+    if (params.source !== "local") return "";
+    if (params.fallbackReason === "unauthorized") {
+      return "You are not signed in on this device. Points shown may be local only until you sign in.";
+    }
+    if (params.fallbackReason === "network_or_server") {
+      return "Backend was unavailable during your last submit. Local fallback was used.";
+    }
+    return "";
+  }, [params.fallbackReason, params.source]);
+
   return (
     <View style={styles.screen}>
       <Text style={styles.title}>My Points</Text>
       <Text style={styles.subtitle}>{headerSubtitle}</Text>
+      {fallbackNotice ? <Text style={styles.fallbackNotice}>{fallbackNotice}</Text> : null}
 
       {isLoading ? <ActivityIndicator color="#2563eb" style={styles.loader} /> : null}
 
@@ -240,6 +257,17 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 15,
     color: "#4b587c",
+  },
+  fallbackNotice: {
+    marginTop: 8,
+    color: "#9a3412",
+    fontSize: 12,
+    backgroundColor: "#fff7ed",
+    borderColor: "#fdba74",
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   loader: {
     marginTop: 10,

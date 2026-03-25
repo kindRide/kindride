@@ -12,10 +12,13 @@ export default function PostTripRatingScreen() {
   const [submitted, setSubmitted] = useState(false);
   const [earnedPoints, setEarnedPoints] = useState(0);
   const [pointsSource, setPointsSource] = useState<"backend" | "local">("local");
+  const [fallbackReason, setFallbackReason] = useState<"" | "unauthorized" | "network_or_server">("");
+  const [fallbackMessage, setFallbackMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async () => {
     if (isSubmitting) return;
+    if (rating < 1) return;
     setIsSubmitting(true);
 
     const result = await awardPoints({
@@ -27,6 +30,14 @@ export default function PostTripRatingScreen() {
 
     setEarnedPoints(result.pointsEarned);
     setPointsSource(result.source);
+    setFallbackReason(result.source === "local" ? (result.fallbackReason ?? "network_or_server") : "");
+    setFallbackMessage(
+      result.source === "local" && result.fallbackReason === "unauthorized"
+        ? "You are not signed in on this device. Points shown are local only. Sign in on the Points tab to sync with backend."
+        : result.source === "local"
+          ? "Backend is temporarily unavailable. Points shown are local fallback."
+          : ""
+    );
     setSubmitted(true);
     setIsSubmitting(false);
   };
@@ -52,7 +63,11 @@ export default function PostTripRatingScreen() {
         style={styles.input}
       />
 
-      <Pressable onPress={handleSubmit} style={styles.submitButton}>
+      <Pressable
+        onPress={handleSubmit}
+        disabled={rating < 1 || isSubmitting}
+        style={[styles.submitButton, rating < 1 && styles.submitButtonDisabled]}
+      >
         <Text style={styles.submitButtonText}>
           {isSubmitting ? "Submitting..." : "Submit Rating"}
         </Text>
@@ -71,11 +86,19 @@ export default function PostTripRatingScreen() {
               <Text style={styles.sourceText}>
                 Source: {pointsSource === "backend" ? "Backend API" : "Local fallback"}
               </Text>
+              {fallbackMessage ? (
+                <Text style={styles.fallbackMessage}>{fallbackMessage}</Text>
+              ) : null}
               <Pressable
                 onPress={() =>
                   router.push({
                     pathname: "/(tabs)/points",
-                    params: { earned: String(earnedPoints), role: currentUserRole },
+                    params: {
+                      earned: String(earnedPoints),
+                      role: currentUserRole,
+                      source: pointsSource,
+                      fallbackReason,
+                    },
                   })
                 }
                 style={styles.pointsButton}
@@ -145,6 +168,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     alignItems: "center",
   },
+  submitButtonDisabled: {
+    opacity: 0.45,
+  },
   submitButtonText: {
     color: "#ffffff",
     fontWeight: "700",
@@ -176,6 +202,12 @@ const styles = StyleSheet.create({
   sourceText: {
     color: "#4b587c",
     fontSize: 12,
+  },
+  fallbackMessage: {
+    color: "#9a3412",
+    fontSize: 12,
+    textAlign: "center",
+    maxWidth: 320,
   },
   pointsButton: {
     backgroundColor: "#1d4ed8",
