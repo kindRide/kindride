@@ -18,6 +18,7 @@ Week 2 Session 9 is complete.
 Week 2 Session 10 is complete.
 Week 2 Session 11 is complete.
 Week 2 Session 12 is complete.
+Week 2 Session 13 is complete.
 
 Working app flow (phone-tested):
 1. Home screen (`app/(tabs)/index.tsx`)
@@ -130,6 +131,16 @@ Week 2:
 - Session 12 completed:
   - Added `EXPO_PUBLIC_POINTS_REQUIRE_BACKEND=true` toggle to disable local fallback and surface backend errors
   - Kept the next focus: validate ride completion/ownership server-side when the `rides` table exists
+- Session 13 completed:
+  - Production hardening + debug clarity: when backend fails, show backend error detail instead of only generic fallback
+  - Backend awards now also validate ride completion (`/rides/complete` + points/award check)
+- Session 14 completed:
+  - Updated points scoring to match blueprint Step 17:
+    - base 10 points
+    - distance bonus = 1 point per mile
+    - zero-detour multiplier = 1.5x
+    - 5-star rating adds +5 after multiplier
+  - Kept local fallback formula consistent for debugging alignment
 
 ## Security-First Checklist (Always On)
 

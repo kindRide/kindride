@@ -229,18 +229,29 @@ def _verify_user_bearer_token(authorization: str | None) -> str:
     return sub
 
 
-def _compute_points(rating: int, _was_zero_detour: bool, distance_miles: float) -> int:
+def _compute_points(rating: int, was_zero_detour: bool, distance_miles: float) -> int:
     """
     SERVER-SIDE scoring. Only this function should decide how many points to award
     for a given request (the app may display guesses, but this is the truth).
 
-    Today: base 10 + 5 for five-star. Distance / zero-detour multipliers come next.
+    Blueprint-aligned scoring (Phase 4 Step 17):
+      - base = 10
+      - distance bonus = 1 point per mile
+      - if zero-detour: multiply subtotal by 1.5
+      - if 5-star rating: add +5 after the multiplier
     """
-    base = 10
-    bonus_5_star = 5 if rating == 5 else 0
-    _ = distance_miles  # reserved for distance bonus like your blueprint
-    _ = _was_zero_detour  # reserved for 1.5x rules
-    return base + bonus_5_star
+    base_points = 10
+    distance_bonus = float(distance_miles) * 1.0
+    subtotal = base_points + distance_bonus
+
+    if was_zero_detour:
+        subtotal *= 1.5
+
+    rating_bonus = 5 if rating == 5 else 0
+    total = subtotal + rating_bonus
+
+    # points.total_points is integer, so round to nearest int.
+    return int(round(total))
 
 
 def _tier_for_total(total: int) -> str:

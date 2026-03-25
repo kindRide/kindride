@@ -16,10 +16,20 @@ type AwardPointsResult = {
   backendErrorDetail?: string;
 };
 
-const calcLocalPoints = (rating: number) => {
+const calcLocalPoints = (
+  rating: number,
+  wasZeroDetour: boolean,
+  distanceMiles: number
+) => {
+  // Blueprint-aligned scoring (Phase 4 Step 17):
+  // base=10, distance bonus=1 point per mile, zero-detour multiplies subtotal by 1.5,
+  // and a 5-star rating adds +5 after the multiplier.
   const basePoints = 10;
-  const fiveStarBonus = rating === 5 ? 5 : 0;
-  return basePoints + fiveStarBonus;
+  const distanceBonus = distanceMiles * 1.0;
+  let subtotal = basePoints + distanceBonus;
+  if (wasZeroDetour) subtotal *= 1.5;
+  const ratingBonus = rating === 5 ? 5 : 0;
+  return Math.round(subtotal + ratingBonus);
 };
 
 export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsResult> {
@@ -34,7 +44,11 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
       throw new Error("Points API is not configured (EXPO_PUBLIC_POINTS_API_URL missing).");
     }
     return {
-      pointsEarned: calcLocalPoints(input.rating),
+      pointsEarned: calcLocalPoints(
+        input.rating,
+        input.wasZeroDetour,
+        input.distanceMiles
+      ),
       source: "local",
       fallbackReason: "network_or_server",
       backendErrorDetail: undefined,
@@ -66,7 +80,11 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
         );
       }
       return {
-        pointsEarned: calcLocalPoints(input.rating),
+        pointsEarned: calcLocalPoints(
+          input.rating,
+          input.wasZeroDetour,
+          input.distanceMiles
+        ),
         source: "local",
         fallbackReason: "unauthorized",
         backendErrorDetail: undefined,
@@ -110,7 +128,11 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
     }
     const message = err instanceof Error ? err.message : "Backend points request failed.";
     return {
-      pointsEarned: calcLocalPoints(input.rating),
+      pointsEarned: calcLocalPoints(
+        input.rating,
+        input.wasZeroDetour,
+        input.distanceMiles
+      ),
       source: "local",
       fallbackReason: "network_or_server",
       backendErrorDetail: message,
