@@ -24,8 +24,10 @@ const calcLocalPoints = (rating: number) => {
 
 export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsResult> {
   const endpoint = process.env.EXPO_PUBLIC_POINTS_API_URL;
-  const requireBackend =
-    process.env.EXPO_PUBLIC_POINTS_REQUIRE_BACKEND === "true";
+  // Production hardening: backend is REQUIRED by default.
+  // Only allow local fallback if you explicitly set:
+  //   EXPO_PUBLIC_POINTS_REQUIRE_BACKEND=false
+  const requireBackend = process.env.EXPO_PUBLIC_POINTS_REQUIRE_BACKEND !== "false";
 
   if (!endpoint) {
     if (requireBackend) {
