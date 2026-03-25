@@ -1,6 +1,6 @@
 # KindRide - Project Status
 
-Last updated: 2026-03-25 (Week 2 Session 16)
+Last updated: 2026-03-25 (Week 2 Session 17)
 Owner: Oluwafemi Adebayo Adeyemi
 
 ## Current Build State
@@ -21,6 +21,7 @@ Week 2 Session 12 is complete.
 Week 2 Session 13 is complete.
 Week 2 Session 15 is complete.
 Week 2 Session 16 is complete.
+Week 2 Session 17 is complete.
 
 Working app flow (phone-tested):
 1. Home screen (`app/(tabs)/index.tsx`)
@@ -35,9 +36,9 @@ Working app flow (phone-tested):
 ## What Is Implemented
 
 - Expo Router navigation working
-- Dummy driver list with intent badges:
-  - "Already heading your way"
-  - "Willing to detour"
+- Driver matching list (intent badges) with server source when signed in:
+  - `GET /matching/demo-drivers` (placeholder data; same shape as embedded fallback)
+  - "Already heading your way" / "Willing to detour"
 - Ride request scanning/loading UI
 - Active trip mock UI:
   - status text
@@ -73,7 +74,7 @@ Working app flow (phone-tested):
 
 - Full app-wide Supabase authentication flow (only points screen has minimal auth currently)
 - Real map/GPS live tracking
-- Matching algorithm backend (FastAPI)
+- Real geo / availability matching (replace `/matching/demo-drivers` implementation)
 - Push notifications
 - Real SOS integrations (Twilio/contacts)
 - Real trip `rideId` from app navigation state (wired Active Trip → Post Trip Rating)
@@ -164,6 +165,9 @@ Week 2:
   - Backend: optional `passengerId` on `POST /rides/complete`; `POST /passengers/rate`; `GET /passengers/{passenger_id}/reputation`
   - App: signed-in requester UUID passed as `passengerId`; ~1-in-5 trips open rate-passenger before driver star rating; active trip shows passenger community score when available
   - Session 16 follow-up (finish): centralized `lib/backend-api-urls.ts` + `lib/backend-error.ts` (strict URL + FastAPI error parsing); `backend/README.md` updated to list all endpoints and SQL order
+- Session 17 completed:
+  - Backend `GET /matching/demo-drivers` (JWT required): server-owned driver list placeholder for real matching later
+  - App: `lib/matching-drivers.ts` (fallback + JSON validation); Ride Request fetches list after scan when signed in; offline / 401 keeps embedded fallback
 
 ## Security-First Checklist (Always On)
 

@@ -89,7 +89,7 @@ SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "").strip()
 
 logger = logging.getLogger("kindride.api")
 
-app = FastAPI(title="KindRide Points API", version="0.3.0")
+app = FastAPI(title="KindRide Points API", version="0.4.0")
 
 # Cache JWKS client so the first request doesn't repeatedly re-instantiate it.
 # This reduces latency when JWT verification happens via RS256.
@@ -448,6 +448,58 @@ def _award_points_with_idempotency(
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+class DemoDriverCard(BaseModel):
+    """One driver option in the matching list (MVP: static; later: geo + availability)."""
+
+    id: str
+    name: str
+    tier: str
+    etaMinutes: int
+    distanceMiles: float
+    intent: Literal["already_going", "detour"]
+
+
+def _demo_driver_catalog() -> list[DemoDriverCard]:
+    return [
+        DemoDriverCard(
+            id="1",
+            name="Aisha Bello",
+            tier="Champion",
+            etaMinutes=4,
+            distanceMiles=1.1,
+            intent="already_going",
+        ),
+        DemoDriverCard(
+            id="2",
+            name="Daniel Kim",
+            tier="Good Samaritan",
+            etaMinutes=6,
+            distanceMiles=1.8,
+            intent="detour",
+        ),
+        DemoDriverCard(
+            id="3",
+            name="Grace Martin",
+            tier="Leader",
+            etaMinutes=7,
+            distanceMiles=2.2,
+            intent="already_going",
+        ),
+    ]
+
+
+@app.get("/matching/demo-drivers", response_model=list[DemoDriverCard])
+def matching_demo_drivers(authorization: str | None = Header(default=None)):
+    """
+    Matching feed placeholder: returns a deterministic driver list from the server.
+    Swap this implementation for real routing when GPS + driver availability exist.
+    Caller must send a valid Supabase access token (passenger or driver).
+    """
+    _require_config()
+    _verify_user_bearer_token(authorization)
+    return _demo_driver_catalog()
 
 
 class CompleteRideRequest(BaseModel):

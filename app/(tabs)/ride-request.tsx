@@ -1,7 +1,5 @@
 import { Link, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-
-import { supabase } from "@/lib/supabase";
 import {
   ActivityIndicator,
   FlatList,
@@ -11,49 +9,19 @@ import {
   View,
 } from "react-native";
 
-type DriverTier = "Helper" | "Good Samaritan" | "Champion" | "Leader" | "Elite";
-
-type DriverCard = {
-  id: string;
-  name: string;
-  tier: DriverTier;
-  etaMinutes: number;
-  distanceMiles: number;
-  intent: "already_going" | "detour";
-};
-
-const DUMMY_DRIVERS: DriverCard[] = [
-  {
-    id: "1",
-    name: "Aisha Bello",
-    tier: "Champion",
-    etaMinutes: 4,
-    distanceMiles: 1.1,
-    intent: "already_going",
-  },
-  {
-    id: "2",
-    name: "Daniel Kim",
-    tier: "Good Samaritan",
-    etaMinutes: 6,
-    distanceMiles: 1.8,
-    intent: "detour",
-  },
-  {
-    id: "3",
-    name: "Grace Martin",
-    tier: "Leader",
-    etaMinutes: 7,
-    distanceMiles: 2.2,
-    intent: "already_going",
-  },
-];
+import { getMatchingDemoDriversUrlOrNull } from "@/lib/backend-api-urls";
+import {
+  FALLBACK_DEMO_DRIVERS,
+  type DriverCard,
+  parseDriverCardsFromApi,
+} from "@/lib/matching-drivers";
+import { supabase } from "@/lib/supabase";
 
 export default function RideRequestScreen() {
   const router = useRouter();
   const [isScanning, setIsScanning] = useState(true);
   const [secondsLeft, setSecondsLeft] = useState(150); // 2:30
-  const [drivers] = useState<DriverCard[]>(DUMMY_DRIVERS);
+  const [drivers, setDrivers] = useState<DriverCard[]>(FALLBACK_DEMO_DRIVERS);
 
   useEffect(() => {
     const scanTimer = setTimeout(() => {
@@ -71,6 +39,41 @@ export default function RideRequestScreen() {
     }, 1000);
 
     return () => clearInterval(countdownTimer);
+  }, [isScanning]);
+
+  useEffect(() => {
+    if (isScanning) return;
+
+    let cancelled = false;
+    async function loadMatchingList() {
+      const url = getMatchingDemoDriversUrlOrNull();
+      if (!url) return;
+
+      const accessToken = supabase
+        ? (await supabase.auth.getSession()).data.session?.access_token
+        : undefined;
+
+      try {
+        const response = await fetch(url, {
+          headers: {
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          },
+        });
+        if (cancelled || !response.ok) return;
+        const data: unknown = await response.json();
+        const parsed = parseDriverCardsFromApi(data);
+        if (parsed && !cancelled) {
+          setDrivers(parsed);
+        }
+      } catch {
+        /* keep FALLBACK_DEMO_DRIVERS */
+      }
+    }
+
+    loadMatchingList();
+    return () => {
+      cancelled = true;
+    };
   }, [isScanning]);
 
   const countdownText = useMemo(() => {

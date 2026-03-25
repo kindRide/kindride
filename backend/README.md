@@ -46,6 +46,7 @@ Use a real Supabase **session access token** in the app (`Authorization: Bearer 
 | `POST` | `/points/award` | Legacy full award in one call (prefer split flow above) |
 | `POST` | `/passengers/rate` | Driver rates passenger (smile / neutral / sad + optional comment) |
 | `GET` | `/passengers/{passenger_id}/reputation` | Aggregate score + count for a passenger |
+| `GET` | `/matching/demo-drivers` | Auth required — placeholder driver list (replace with geo later) |
 
 ## Example: complete ride + rating bonus
 
@@ -63,6 +64,13 @@ curl -X POST "http://127.0.0.1:8000/points/rating-bonus" ^
   -H "Content-Type: application/json" ^
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" ^
   -d "{\"rideId\":\"00000000-0000-4000-8000-000000000001\",\"rating\":5}"
+```
+
+## Example: matching driver list (signed-in user)
+
+```bash
+curl -X GET "http://127.0.0.1:8000/matching/demo-drivers" ^
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
 ## Example: rate passenger (after `rides` exists and is completed)

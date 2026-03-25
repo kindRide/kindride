@@ -52,3 +52,12 @@ export function getPassengerReputationUrlOrNull(passengerId: string): string | n
   const b = getBackendBaseUrlOrNull();
   return b ? `${b}/passengers/${encodeURIComponent(passengerId)}/reputation` : null;
 }
+
+export function getMatchingDemoDriversUrl(): string {
+  return `${getBackendBaseUrl()}/matching/demo-drivers`;
+}
+
+export function getMatchingDemoDriversUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/matching/demo-drivers` : null;
+}
