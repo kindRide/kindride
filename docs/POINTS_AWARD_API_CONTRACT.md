@@ -45,5 +45,5 @@ This is the backend contract that the mobile app now expects for secure point aw
 
 - By default, if endpoint is not configured or fails, app falls back to local points calculation (so the UI stays responsive).
 - If you set `EXPO_PUBLIC_POINTS_REQUIRE_BACKEND=true` in `KindRide/.env`, the app will NOT use local fallback. Instead, it will show an error when backend awarding fails (unauthorized, network/server error, or timeout).
-- Production hardening: backend is now REQUIRED by default.
-  - To re-enable local fallback for debugging, set `EXPO_PUBLIC_POINTS_REQUIRE_BACKEND=false` in `KindRide/.env`.
+- Production hardening: backend is REQUIRED and local fallback for awarding is disabled.
+  - If backend awarding fails (missing config, unauthorized, ride not completed, network/server error), the app shows an error instead of crediting local points.

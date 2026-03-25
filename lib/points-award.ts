@@ -34,25 +34,12 @@ const calcLocalPoints = (
 
 export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsResult> {
   const endpoint = process.env.EXPO_PUBLIC_POINTS_API_URL;
-  // Production hardening: backend is REQUIRED by default.
-  // Only allow local fallback if you explicitly set:
-  //   EXPO_PUBLIC_POINTS_REQUIRE_BACKEND=false
-  const requireBackend = process.env.EXPO_PUBLIC_POINTS_REQUIRE_BACKEND !== "false";
+  // Production hardening: backend is REQUIRED.
+  // We do not silently fall back to local points for awarding.
+  // If anything fails, we throw and let the UI show an error.
 
   if (!endpoint) {
-    if (requireBackend) {
-      throw new Error("Points API is not configured (EXPO_PUBLIC_POINTS_API_URL missing).");
-    }
-    return {
-      pointsEarned: calcLocalPoints(
-        input.rating,
-        input.wasZeroDetour,
-        input.distanceMiles
-      ),
-      source: "local",
-      fallbackReason: "network_or_server",
-      backendErrorDetail: undefined,
-    };
+    throw new Error("Points API is not configured (EXPO_PUBLIC_POINTS_API_URL missing).");
   }
 
   try {
@@ -74,21 +61,9 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
     }).finally(() => clearTimeout(timeoutId));
 
     if (response.status === 401) {
-      if (requireBackend) {
-        throw new Error(
-          "Unauthorized: please sign in on the Points tab so backend can award points."
-        );
-      }
-      return {
-        pointsEarned: calcLocalPoints(
-          input.rating,
-          input.wasZeroDetour,
-          input.distanceMiles
-        ),
-        source: "local",
-        fallbackReason: "unauthorized",
-        backendErrorDetail: undefined,
-      };
+      throw new Error(
+        "Unauthorized: please sign in on the Points tab so backend can award points."
+      );
     }
 
     if (!response.ok) {
@@ -121,21 +96,8 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
       backendErrorDetail: undefined,
     };
   } catch (err) {
-    if (requireBackend) {
-      const message =
-        err instanceof Error ? err.message : "Backend points request failed.";
-      throw new Error(message);
-    }
-    const message = err instanceof Error ? err.message : "Backend points request failed.";
-    return {
-      pointsEarned: calcLocalPoints(
-        input.rating,
-        input.wasZeroDetour,
-        input.distanceMiles
-      ),
-      source: "local",
-      fallbackReason: "network_or_server",
-      backendErrorDetail: message,
-    };
+    const message =
+      err instanceof Error ? err.message : "Backend points request failed.";
+    throw new Error(message);
   }
 }
