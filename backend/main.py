@@ -89,7 +89,7 @@ SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "").strip()
 
 logger = logging.getLogger("kindride.api")
 
-app = FastAPI(title="KindRide Points API", version="0.5.0")
+app = FastAPI(title="KindRide Points API", version="0.6.0")
 
 # Cache JWKS client so the first request doesn't repeatedly re-instantiate it.
 # This reduces latency when JWT verification happens via RS256.
@@ -645,7 +645,8 @@ class CompleteRideRequest(BaseModel):
 
     rideId: str = Field(min_length=3)
     wasZeroDetour: bool = True
-    distanceMiles: float = Field(ge=0)
+    # Blueprint: 1 point per mile on this leg; must be a positive, realistic segment length.
+    distanceMiles: float = Field(ge=0.1, le=500)
     passengerId: str | None = None
     journeyId: str | None = None
     legIndex: int = Field(default=1, ge=1, le=500)
@@ -742,6 +743,8 @@ def complete_ride(
     if payload.journeyId:
         body["journey_id"] = payload.journeyId
         body["leg_index"] = payload.legIndex
+    body["distance_miles"] = payload.distanceMiles
+    body["was_zero_detour"] = payload.wasZeroDetour
 
     with httpx.Client() as client:
         if payload.journeyId:

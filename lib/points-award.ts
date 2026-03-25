@@ -54,7 +54,7 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
         "Content-Type": "application/json",
         ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       },
-      body: JSON.stringify(input),
+      body: JSON.stringify({ rideId: input.rideId, rating: input.rating }),
       signal: controller.signal,
     }).finally(() => clearTimeout(timeoutId));
 

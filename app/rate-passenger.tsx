@@ -23,6 +23,8 @@ export default function RatePassengerScreen() {
     driverName?: string;
     journeyId?: string;
     legIndex?: string;
+    distanceMiles?: string;
+    wasZeroDetour?: string;
   }>();
 
   const rideId =
@@ -49,6 +51,12 @@ export default function RatePassengerScreen() {
     }
     if (typeof params.legIndex === "string" && params.legIndex.length > 0) {
       meta.legIndex = params.legIndex;
+    }
+    if (typeof params.distanceMiles === "string" && params.distanceMiles.length > 0) {
+      meta.distanceMiles = params.distanceMiles;
+    }
+    if (typeof params.wasZeroDetour === "string" && params.wasZeroDetour.length > 0) {
+      meta.wasZeroDetour = params.wasZeroDetour;
     }
     if (passengerId) meta.passengerId = passengerId;
     router.replace({

@@ -164,6 +164,7 @@ export default function NextLegRequestScreen() {
                 driverId: item.id,
                 driverName: item.name,
                 passengerId,
+                wasZeroDetour: item.intent === "already_going" ? "true" : "false",
               },
             });
           }}

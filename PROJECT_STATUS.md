@@ -1,6 +1,6 @@
 # KindRide - Project Status
 
-Last updated: 2026-03-25 (Week 2 Session 18)
+Last updated: 2026-03-25 (Week 2 Session 19)
 Owner: Oluwafemi Adebayo Adeyemi
 
 ## Current Build State
@@ -23,6 +23,7 @@ Week 2 Session 15 is complete.
 Week 2 Session 16 is complete.
 Week 2 Session 17 is complete.
 Week 2 Session 18 is complete.
+Week 2 Session 19 is complete.
 
 Working app flow (phone-tested):
 1. Home screen (`app/(tabs)/index.tsx`)
@@ -149,7 +150,7 @@ Week 2:
     - 5-star rating adds +5 after multiplier
   - Kept local fallback formula consistent for debugging alignment
   - Founder note: `distanceMiles` means the passenger's trip distance (pickup -> dropoff) used for the distance points bonus.
-    In the current MVP it is still mocked in `app/post-trip-rating.tsx` until real trip distance is wired from the ride completion flow.
+    Session 19+: miles are entered on Active Trip per leg (pickup→dropoff segment); GPS-driven distance can replace the input later.
   - Scoring example (2.2 miles, 5 stars, zero-detour=true):
     - base + distance = 10 + (2.2 * 1) = 12.2
     - apply 1.5x multiplier => 12.2 * 1.5 = 18.3
@@ -174,7 +175,7 @@ Week 2:
 - Session 18 completed:
   - Multi-leg handoffs: `public.journeys` + `rides.journey_id` / `rides.leg_index` (`supabase/journeys_multileg.sql`)
   - `POST /journeys/register` (passenger JWT), `POST /journeys/complete` (end whole trip), `POST /rides/complete` accepts optional `journeyId` + `legIndex` with passenger/journey validation
-  - App: new `journeyId` per Ride Request when signed in (`lib/journey-id.ts`); `next-leg-request` screen; post-trip flow can chain legs or close journey; `distanceMiles` still mocked per leg (later session)
+  - App: new `journeyId` per Ride Request when signed in (`lib/journey-id.ts`); `next-leg-request` screen; post-trip flow can chain legs or close journey; per-leg miles added in Session 19
 
 ## Security-First Checklist (Always On)
 

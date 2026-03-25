@@ -155,9 +155,8 @@ export default function RideRequestScreen() {
               params: {
                 driverId: item.id,
                 driverName: item.name,
-                ...(passengerId
-                  ? { passengerId, journeyId, legIndex: "1" }
-                  : {}),
+                wasZeroDetour: item.intent === "already_going" ? "true" : "false",
+                ...(passengerId ? { passengerId, journeyId, legIndex: "1" } : {}),
               },
             });
           }}

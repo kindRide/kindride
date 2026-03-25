@@ -15,6 +15,8 @@ export default function PostTripRatingScreen() {
     journeyId?: string;
     legIndex?: string;
     passengerId?: string;
+    distanceMiles?: string;
+    wasZeroDetour?: string;
   }>();
 
   // Fallback rideId if you land on this screen directly (should not happen often).
@@ -116,8 +118,8 @@ export default function PostTripRatingScreen() {
       const result = await awardPoints({
         rideId,
         rating,
-        wasZeroDetour: true,
-        distanceMiles: 2.2,
+        wasZeroDetour: completedWasZeroDetour,
+        distanceMiles: completedLegMiles,
       });
 
       setEarnedPoints(result.pointsEarned);

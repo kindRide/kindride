@@ -13,6 +13,7 @@ The module docstring at the top of `main.py` explains JWT verification, idempote
    - `supabase/rides_schema.sql` (minimal `rides` for completion checks)
    - `supabase/passenger_ratings_schema.sql` (driver → passenger face ratings + cumulative reputation)
    - `supabase/journeys_multileg.sql` (journeys + `rides.journey_id` / `rides.leg_index`)
+   - `supabase/rides_leg_distance.sql` (`rides.distance_miles`, `rides.was_zero_detour` — filled on complete)
 
 ```bash
 cd backend
@@ -42,7 +43,7 @@ Use a real Supabase **session access token** in the app (`Authorization: Bearer 
 |--------|------|---------|
 | `GET` | `/health` | Liveness |
 | `GET` | `/health/supabase` | PostgREST + service role check |
-| `POST` | `/rides/complete` | Mark ride completed; optional `passengerId`, `journeyId`, `legIndex`; awards base leg points |
+| `POST` | `/rides/complete` | Mark ride completed; `distanceMiles` (0.1–500), `wasZeroDetour`; optional `passengerId`, `journeyId`, `legIndex`; writes leg metrics + awards base points |
 | `POST` | `/points/rating-bonus` | Deferred +5 for 5-star driver rating (after trip) |
 | `POST` | `/points/award` | Legacy full award in one call (prefer split flow above) |
 | `POST` | `/passengers/rate` | Driver rates passenger (smile / neutral / sad + optional comment) |

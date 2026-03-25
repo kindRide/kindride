@@ -1,11 +1,12 @@
 import { Link, type Href, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 
 import {
   getPassengerReputationUrlOrNull,
   getRidesCompleteUrlOrNull,
 } from "@/lib/backend-api-urls";
+import { formatBackendErrorBody } from "@/lib/backend-error";
 import { shouldPromptPassengerRating } from "@/lib/passenger-rating-prompt";
 import { supabase } from "@/lib/supabase";
 
@@ -16,6 +17,7 @@ export default function ActiveTripScreen() {
     passengerId?: string;
     journeyId?: string;
     legIndex?: string;
+    wasZeroDetour?: string;
   }>();
   const driverName =
     typeof params.driverName === "string" && params.driverName.length > 0
@@ -34,6 +36,11 @@ export default function ActiveTripScreen() {
     const n = parseInt(raw, 10);
     return Number.isFinite(n) && n >= 1 ? n : 1;
   })();
+
+  const wasZeroDetourFromDriver =
+    typeof params.wasZeroDetour === "string" && params.wasZeroDetour.length > 0
+      ? params.wasZeroDetour === "true"
+      : true;
 
   const backToSearchHref: Href =
     journeyId && passengerId
@@ -54,6 +61,9 @@ export default function ActiveTripScreen() {
   });
 
   const [isCompletingRide, setIsCompletingRide] = useState(false);
+  /** Miles for this leg only (pickup → dropoff segment). Entered before End Trip. */
+  const [legMilesText, setLegMilesText] = useState("");
+  const [wasZeroDetour, setWasZeroDetour] = useState(wasZeroDetourFromDriver);
   const [passengerRep, setPassengerRep] = useState<{
     total_score: number;
     rating_count: number;
@@ -145,6 +155,21 @@ export default function ActiveTripScreen() {
           <Text style={styles.repHint}>Passenger profile: no ratings yet (or sign in to load).</Text>
         ) : null}
         <Text style={styles.statusText}>{tripStatus}</Text>
+        <Text style={styles.legDistanceLabel}>This leg’s miles (pickup → your drop-off)</Text>
+        <TextInput
+          value={legMilesText}
+          onChangeText={setLegMilesText}
+          placeholder="e.g. 2.2"
+          keyboardType="decimal-pad"
+          style={styles.legMilesInput}
+        />
+        <Text style={styles.detourHint}>
+          Zero/low detour (driver was already heading this way) affects the points multiplier.
+        </Text>
+        <View style={styles.switchRow}>
+          <Switch value={wasZeroDetour} onValueChange={setWasZeroDetour} />
+          <Text style={styles.switchLabel}>Minimal detour / already going this way</Text>
+        </View>
         <Pressable
           onPress={async () => {
             if (isCompletingRide) return;
@@ -152,6 +177,16 @@ export default function ActiveTripScreen() {
               Alert.alert(
                 "Backend not configured",
                 "EXPO_PUBLIC_POINTS_API_URL is missing, so we cannot mark the ride as completed."
+              );
+              return;
+            }
+
+            const normalizedMiles = legMilesText.trim().replace(",", ".");
+            const miles = parseFloat(normalizedMiles);
+            if (!Number.isFinite(miles) || miles < 0.1 || miles > 500) {
+              Alert.alert(
+                "Trip distance",
+                "Enter miles for this leg only: a number from 0.1 to 500 (e.g. 2.2)."
               );
               return;
             }
@@ -171,24 +206,34 @@ export default function ActiveTripScreen() {
                 },
                 body: JSON.stringify({
                   rideId,
-                  wasZeroDetour: true,
-                  distanceMiles: 2.2,
+                  wasZeroDetour,
+                  distanceMiles: miles,
                   ...(passengerId ? { passengerId } : {}),
                   ...(journeyId ? { journeyId, legIndex: legIndexNum } : {}),
                 }),
               });
 
+              const rawErr = await response.text().catch(() => "");
               if (!response.ok) {
-                throw new Error(`Ride completion failed (${response.status})`);
+                throw new Error(formatBackendErrorBody(rawErr, response.status));
               }
 
               const promptPassenger =
                 Boolean(passengerId) && shouldPromptPassengerRating(rideId);
 
+              const ratingMeta = {
+                distanceMiles: String(miles),
+                wasZeroDetour: wasZeroDetour ? "true" : "false",
+              };
               const tripMeta =
                 journeyId && passengerId
-                  ? { journeyId, legIndex: String(legIndexNum), passengerId }
-                  : {};
+                  ? {
+                      journeyId,
+                      legIndex: String(legIndexNum),
+                      passengerId,
+                      ...ratingMeta,
+                    }
+                  : { ...ratingMeta };
               if (promptPassenger) {
                 router.push({
                   pathname: "/rate-passenger",
@@ -328,6 +373,41 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "700",
     color: "#0f766e",
+  },
+  legDistanceLabel: {
+    marginTop: 12,
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#334155",
+  },
+  legMilesInput: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: "#dbe4f5",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    color: "#1f2a44",
+    backgroundColor: "#f8fafc",
+  },
+  detourHint: {
+    marginTop: 10,
+    fontSize: 12,
+    color: "#64748b",
+    lineHeight: 17,
+  },
+  switchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 6,
+    gap: 10,
+  },
+  switchLabel: {
+    flex: 1,
+    fontSize: 14,
+    color: "#334155",
+    fontWeight: "500",
   },
   endTripButton: {
     marginTop: 14,
