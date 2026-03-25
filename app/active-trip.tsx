@@ -90,7 +90,11 @@ export default function ActiveTripScreen() {
                   "Content-Type": "application/json",
                   ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
                 },
-                body: JSON.stringify({ rideId }),
+                body: JSON.stringify({
+                  rideId,
+                  wasZeroDetour: true,
+                  distanceMiles: 2.2,
+                }),
               });
 
               if (!response.ok) {

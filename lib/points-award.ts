@@ -33,7 +33,8 @@ const calcLocalPoints = (
 };
 
 export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsResult> {
-  const endpoint = process.env.EXPO_PUBLIC_POINTS_API_URL;
+  const pointsAwardEndpoint = process.env.EXPO_PUBLIC_POINTS_API_URL;
+  const endpoint = pointsAwardEndpoint?.replace("/points/award", "/points/rating-bonus");
   // Production hardening: backend is REQUIRED.
   // We do not silently fall back to local points for awarding.
   // If anything fails, we throw and let the UI show an error.

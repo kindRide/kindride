@@ -1,6 +1,6 @@
 # KindRide - Project Status
 
-Last updated: 2026-03-25 (Week 2 Session 12)
+Last updated: 2026-03-25 (Week 2 Session 15)
 Owner: Oluwafemi Adebayo Adeyemi
 
 ## Current Build State
@@ -19,6 +19,7 @@ Week 2 Session 10 is complete.
 Week 2 Session 11 is complete.
 Week 2 Session 12 is complete.
 Week 2 Session 13 is complete.
+Week 2 Session 15 is complete.
 
 Working app flow (phone-tested):
 1. Home screen (`app/(tabs)/index.tsx`)
@@ -148,6 +149,13 @@ Week 2:
     - apply 1.5x multiplier => 12.2 * 1.5 = 18.3
     - add 5-star bonus => 18.3 + 5 = 23.3
     - round to integer => 23 points
+- Session 15 completed:
+  - Implemented non-blocking leg flow:
+    - `/rides/complete` now awards base leg points immediately (base + distance, with zero-detour multiplier)
+    - `/points/rating-bonus` now awards only deferred +5 bonus for 5-star ratings
+  - Updated app flow:
+    - Active Trip sends distance/zero-detour at ride completion
+    - Post-trip rating now displays rating bonus points from backend
 
 ## Security-First Checklist (Always On)
 

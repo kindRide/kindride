@@ -123,7 +123,7 @@ export default function PostTripRatingScreen() {
           <Text style={styles.successText}>Thanks! Your rating has been recorded.</Text>
           {currentUserRole === "driver" ? (
             <>
-              <Text style={styles.pointsText}>You earned +{earnedPoints} points</Text>
+              <Text style={styles.pointsText}>Rating bonus earned: +{earnedPoints} points</Text>
               <Text style={styles.sourceText}>
                 Source: {pointsSource === "backend" ? "Backend API" : "Local fallback"}
               </Text>

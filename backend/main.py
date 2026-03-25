@@ -369,6 +369,75 @@ def _update_points_balance(client: httpx.Client, driver_id: str, new_total: int)
         raise HTTPException(status_code=502, detail=f"Update points failed: {r.text}")
 
 
+def _ensure_completed_ride(client: httpx.Client, driver_id: str, ride_id: str) -> None:
+    """Guard: points operations only allowed for driver's completed rides."""
+    r = client.get(
+        _rest_url("/rides"),
+        params={
+            "id": f"eq.{ride_id}",
+            "driver_id": f"eq.{driver_id}",
+            "select": "status",
+            "limit": "1",
+        },
+        headers=_service_headers(),
+        timeout=30.0,
+    )
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Ride read failed: {r.text}")
+    rows = _rest_json_list(r, "rides select")
+    if not rows or rows[0].get("status") != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail="Ride is not completed (missing /rides record or status != completed)",
+        )
+
+
+def _award_points_with_idempotency(
+    client: httpx.Client,
+    driver_id: str,
+    ride_id: str,
+    idempotency_key: str,
+    action: str,
+    points: int,
+    metadata: dict,
+) -> tuple[int, bool]:
+    """
+    Ledger-style award with idempotency and balance update.
+    Returns: (points_earned, idempotent)
+    """
+    existing = _fetch_existing_award(client, driver_id, idempotency_key)
+    if existing is not None:
+        return existing, True
+
+    _ensure_driver_points_row(client, driver_id)
+
+    body = {
+        "driver_id": driver_id,
+        "ride_id": ride_id,
+        "action": action,
+        "points_change": points,
+        "idempotency_key": idempotency_key,
+        "metadata": metadata,
+    }
+    r = client.post(
+        _rest_url("/point_events"),
+        headers={**_service_headers(), "Prefer": "return=minimal"},
+        json=body,
+        timeout=30.0,
+    )
+    if r.status_code not in (200, 201):
+        if r.status_code == 409 or "duplicate key" in r.text.lower() or "unique" in r.text.lower():
+            concurrent = _fetch_existing_award(client, driver_id, idempotency_key)
+            if concurrent is None:
+                raise HTTPException(status_code=502, detail="Duplicate insert but no award row found")
+            return concurrent, True
+        raise HTTPException(status_code=502, detail=f"Insert point_events failed: {r.text}")
+
+    before = _fetch_total_points(client, driver_id)
+    _update_points_balance(client, driver_id, before + points)
+    return points, False
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -387,6 +456,13 @@ class CompleteRideRequest(BaseModel):
     """
 
     rideId: str = Field(min_length=3)
+    wasZeroDetour: bool = True
+    distanceMiles: float = Field(ge=0)
+
+
+class RatingBonusRequest(BaseModel):
+    rideId: str = Field(min_length=3)
+    rating: int = Field(ge=1, le=5)
 
 
 @app.post("/rides/complete")
@@ -420,7 +496,33 @@ def complete_ride(
         # If PostgREST returns a non-JSON error, we still want the user to see something useful.
         raise HTTPException(status_code=502, detail=f"Ride completion write failed: {r.text}")
 
-    return {"ride_id": ride_id, "status": "completed"}
+    # Non-blocking approach: award base leg points now; rating bonus happens later.
+    base_component = (10 + payload.distanceMiles) * (1.5 if payload.wasZeroDetour else 1.0)
+    base_points = int(round(base_component))
+    with httpx.Client() as client:
+        points_earned, was_idempotent = _award_points_with_idempotency(
+            client=client,
+            driver_id=driver_id,
+            ride_id=ride_id,
+            idempotency_key=f"{ride_id}:base",
+            action="LEG_COMPLETED_BASE",
+            points=base_points,
+            metadata={
+                "ride_id": ride_id,
+                "distance_miles": payload.distanceMiles,
+                "was_zero_detour": payload.wasZeroDetour,
+            },
+        )
+
+    # Search for next driver should continue independently of rating (non-blocking).
+    # Matching engine hookup happens in the next step; for now we return a signal.
+    return {
+        "ride_id": ride_id,
+        "status": "completed",
+        "base_points_earned": points_earned,
+        "base_points_idempotent": was_idempotent,
+        "next_leg_search_status": "searching",
+    }
 
 
 @app.get("/health/supabase")
@@ -448,6 +550,48 @@ def health_supabase():
         }
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+@app.post("/points/rating-bonus", response_model=AwardPointsResponse)
+def award_rating_bonus(
+    payload: RatingBonusRequest,
+    authorization: str | None = Header(default=None),
+):
+    """
+    Deferred bonus path:
+    - Base points are awarded at /rides/complete.
+    - Rating bonus is awarded later (non-blocking for next-leg search).
+    """
+    _require_config()
+    driver_id = _verify_user_bearer_token(authorization)
+
+    with httpx.Client() as client:
+        _ensure_completed_ride(client, driver_id, payload.rideId)
+
+        if payload.rating != 5:
+            return AwardPointsResponse(
+                points_earned=0,
+                source="backend",
+                credited_driver_id=driver_id,
+                idempotent=True,
+            )
+
+        points_earned, is_idempotent = _award_points_with_idempotency(
+            client=client,
+            driver_id=driver_id,
+            ride_id=payload.rideId,
+            idempotency_key=f"{payload.rideId}:rating5",
+            action="LEG_RATING_5_STAR_BONUS",
+            points=5,
+            metadata={"ride_id": payload.rideId, "rating": payload.rating},
+        )
+
+    return AwardPointsResponse(
+        points_earned=points_earned,
+        source="backend",
+        credited_driver_id=driver_id,
+        idempotent=is_idempotent,
+    )
 
 
 @app.post("/points/award", response_model=AwardPointsResponse)
