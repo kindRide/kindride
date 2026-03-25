@@ -175,7 +175,11 @@ Week 2:
 - Session 18 completed:
   - Multi-leg handoffs: `public.journeys` + `rides.journey_id` / `rides.leg_index` (`supabase/journeys_multileg.sql`)
   - `POST /journeys/register` (passenger JWT), `POST /journeys/complete` (end whole trip), `POST /rides/complete` accepts optional `journeyId` + `legIndex` with passenger/journey validation
-  - App: new `journeyId` per Ride Request when signed in (`lib/journey-id.ts`); `next-leg-request` screen; post-trip flow can chain legs or close journey; per-leg miles added in Session 19
+  - App: new `journeyId` per Ride Request when signed in (`lib/journey-id.ts`); `next-leg-request` screen; post-trip flow can chain legs or close journey
+- Session 19 completed:
+  - Per-leg distance: Active Trip collects miles (0.1–500) and detour toggle (default from driver card intent); values stored on `rides` via `supabase/rides_leg_distance.sql` + `POST /rides/complete`
+  - Backend API v0.6.0: validates leg miles; base points use entered `distanceMiles` and `wasZeroDetour`
+  - `lib/points-award` calls `/points/rating-bonus` with `{ rideId, rating }` only; completed leg miles still passed through navigation for display / future UI
 
 ## Security-First Checklist (Always On)
 
