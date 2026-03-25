@@ -89,7 +89,7 @@ SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "").strip()
 
 logger = logging.getLogger("kindride.api")
 
-app = FastAPI(title="KindRide Points API", version="0.4.0")
+app = FastAPI(title="KindRide Points API", version="0.5.0")
 
 # Cache JWKS client so the first request doesn't repeatedly re-instantiate it.
 # This reduces latency when JWT verification happens via RS256.
@@ -399,6 +399,44 @@ def _ensure_completed_ride(client: httpx.Client, driver_id: str, ride_id: str) -
     _fetch_completed_ride_for_driver(client, driver_id, ride_id)
 
 
+def _get_journey_row(client: httpx.Client, journey_id: str) -> dict | None:
+    r = client.get(
+        _rest_url("/journeys"),
+        params={
+            "id": f"eq.{journey_id}",
+            "select": "id,passenger_id,status",
+            "limit": "1",
+        },
+        headers=_service_headers(),
+        timeout=30.0,
+    )
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"journeys read failed: {r.text}")
+    rows = _rest_json_list(r, "journeys select")
+    return rows[0] if rows else None
+
+
+def _ensure_journey_active_for_passenger(
+    client: httpx.Client, journey_id: str, passenger_id: str
+) -> None:
+    """Multi-leg: ride completion must reference an active journey owned by this passenger."""
+    row = _get_journey_row(client, journey_id)
+    if not row:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unknown journey. Passenger must open Ride Request first so the journey is registered."
+            ),
+        )
+    if str(row.get("passenger_id")) != passenger_id:
+        raise HTTPException(status_code=403, detail="This journey belongs to another passenger.")
+    if row.get("status") != "active":
+        raise HTTPException(
+            status_code=400,
+            detail="This journey is no longer active (completed or cancelled).",
+        )
+
+
 def _award_points_with_idempotency(
     client: httpx.Client,
     driver_id: str,
@@ -502,6 +540,97 @@ def matching_demo_drivers(authorization: str | None = Header(default=None)):
     return _demo_driver_catalog()
 
 
+class RegisterJourneyRequest(BaseModel):
+    """Passenger starts a multi-leg trip; app sends a client-generated UUID."""
+
+    journeyId: str = Field(min_length=3)
+
+    @field_validator("journeyId")
+    @classmethod
+    def journey_uuid(cls, v: str) -> str:
+        UUID(v)
+        return v
+
+
+class CompleteJourneyRequest(BaseModel):
+    """Passenger marks the whole journey finished (no more legs)."""
+
+    journeyId: str = Field(min_length=3)
+
+    @field_validator("journeyId")
+    @classmethod
+    def journey_uuid(cls, v: str) -> str:
+        UUID(v)
+        return v
+
+
+@app.post("/journeys/register")
+def register_journey(
+    payload: RegisterJourneyRequest,
+    authorization: str | None = Header(default=None),
+):
+    """
+    Idempotent: same journeyId + same passenger returns idempotent=true.
+    Another passenger reusing journeyId gets 403.
+    """
+    _require_config()
+    passenger_id = _verify_user_bearer_token(authorization)
+
+    with httpx.Client() as client:
+        existing = _get_journey_row(client, payload.journeyId)
+        if existing:
+            if str(existing.get("passenger_id")) != passenger_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="This journey id is already registered to another passenger.",
+                )
+            return {"journey_id": payload.journeyId, "idempotent": True}
+
+        r = client.post(
+            _rest_url("/journeys"),
+            headers={**_service_headers(), "Prefer": "return=minimal"},
+            json={
+                "id": payload.journeyId,
+                "passenger_id": passenger_id,
+                "status": "active",
+            },
+            timeout=30.0,
+        )
+        if r.status_code not in (200, 201, 204):
+            raise HTTPException(status_code=502, detail=f"Insert journey failed: {r.text}")
+
+    return {"journey_id": payload.journeyId, "idempotent": False}
+
+
+@app.post("/journeys/complete")
+def complete_journey_endpoint(
+    payload: CompleteJourneyRequest,
+    authorization: str | None = Header(default=None),
+):
+    """Sets journey status to completed (passenger JWT must own the row)."""
+    _require_config()
+    passenger_id = _verify_user_bearer_token(authorization)
+    now = datetime.now(timezone.utc).isoformat()
+
+    with httpx.Client() as client:
+        row = _get_journey_row(client, payload.journeyId)
+        if not row:
+            raise HTTPException(status_code=404, detail="Journey not found")
+        if str(row.get("passenger_id")) != passenger_id:
+            raise HTTPException(status_code=403, detail="Not your journey")
+        r = client.patch(
+            _rest_url("/journeys"),
+            params={"id": f"eq.{payload.journeyId}"},
+            headers={**_service_headers(), "Prefer": "return=minimal"},
+            json={"status": "completed", "updated_at": now},
+            timeout=30.0,
+        )
+        if r.status_code not in (200, 204):
+            raise HTTPException(status_code=502, detail=f"Update journey failed: {r.text}")
+
+    return {"journey_id": payload.journeyId, "status": "completed"}
+
+
 class CompleteRideRequest(BaseModel):
     """
     What the app sends to mark a ride session as completed.
@@ -518,6 +647,8 @@ class CompleteRideRequest(BaseModel):
     wasZeroDetour: bool = True
     distanceMiles: float = Field(ge=0)
     passengerId: str | None = None
+    journeyId: str | None = None
+    legIndex: int = Field(default=1, ge=1, le=500)
 
     @field_validator("passengerId", mode="before")
     @classmethod
@@ -529,6 +660,21 @@ class CompleteRideRequest(BaseModel):
     @field_validator("passengerId")
     @classmethod
     def passenger_id_must_be_uuid(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        UUID(v)
+        return v
+
+    @field_validator("journeyId", mode="before")
+    @classmethod
+    def journey_id_empty_to_none(cls, v: object) -> object:
+        if v == "":
+            return None
+        return v
+
+    @field_validator("journeyId")
+    @classmethod
+    def journey_id_must_be_uuid(cls, v: str | None) -> str | None:
         if v is None:
             return None
         UUID(v)
@@ -593,8 +739,19 @@ def complete_ride(
     }
     if payload.passengerId:
         body["passenger_id"] = payload.passengerId
+    if payload.journeyId:
+        body["journey_id"] = payload.journeyId
+        body["leg_index"] = payload.legIndex
 
     with httpx.Client() as client:
+        if payload.journeyId:
+            if not payload.passengerId:
+                raise HTTPException(
+                    status_code=400,
+                    detail="passengerId is required when journeyId is set (multi-leg).",
+                )
+            _ensure_journey_active_for_passenger(client, payload.journeyId, payload.passengerId)
+
         r = client.post(
             _rest_url("/rides"),
             headers={**_service_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
@@ -621,6 +778,11 @@ def complete_ride(
                 "ride_id": ride_id,
                 "distance_miles": payload.distanceMiles,
                 "was_zero_detour": payload.wasZeroDetour,
+                **(
+                    {"journey_id": payload.journeyId, "leg_index": payload.legIndex}
+                    if payload.journeyId
+                    else {}
+                ),
             },
         )
 
@@ -632,6 +794,8 @@ def complete_ride(
         "base_points_earned": points_earned,
         "base_points_idempotent": was_idempotent,
         "next_leg_search_status": "searching",
+        "journey_id": payload.journeyId,
+        "leg_index": payload.legIndex if payload.journeyId else None,
     }
 
 

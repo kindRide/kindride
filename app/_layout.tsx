@@ -17,6 +17,7 @@ export default function RootLayout() {
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="active-trip" options={{ title: "Active Trip" }} />
+        <Stack.Screen name="next-leg-request" options={{ title: "Next leg" }} />
         <Stack.Screen name="rate-passenger" options={{ title: "Rate passenger" }} />
         <Stack.Screen name="post-trip-rating" options={{ title: "Rate Trip" }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />

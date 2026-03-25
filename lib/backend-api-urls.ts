@@ -61,3 +61,21 @@ export function getMatchingDemoDriversUrlOrNull(): string | null {
   const b = getBackendBaseUrlOrNull();
   return b ? `${b}/matching/demo-drivers` : null;
 }
+
+export function getJourneysRegisterUrl(): string {
+  return `${getBackendBaseUrl()}/journeys/register`;
+}
+
+export function getJourneysRegisterUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/journeys/register` : null;
+}
+
+export function getJourneysCompleteUrl(): string {
+  return `${getBackendBaseUrl()}/journeys/complete`;
+}
+
+export function getJourneysCompleteUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/journeys/complete` : null;
+}

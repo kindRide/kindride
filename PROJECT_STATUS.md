@@ -1,6 +1,6 @@
 # KindRide - Project Status
 
-Last updated: 2026-03-25 (Week 2 Session 17)
+Last updated: 2026-03-25 (Week 2 Session 18)
 Owner: Oluwafemi Adebayo Adeyemi
 
 ## Current Build State
@@ -22,16 +22,18 @@ Week 2 Session 13 is complete.
 Week 2 Session 15 is complete.
 Week 2 Session 16 is complete.
 Week 2 Session 17 is complete.
+Week 2 Session 18 is complete.
 
 Working app flow (phone-tested):
 1. Home screen (`app/(tabs)/index.tsx`)
 2. Ride Request screen (`app/(tabs)/ride-request.tsx`)
 3. Active Trip screen (`app/active-trip.tsx`)
 4. (Sometimes) Rate passenger screen (`app/rate-passenger.tsx`) — about 1 in 5 trips, deterministic from `rideId`
-5. Post-Trip Rating screen (`app/post-trip-rating.tsx`)
-6. Back to Home after submission
-7. Driver rating bonus (+5 on 5 stars) from backend after post-trip submit
-8. Points tab screen (`app/(tabs)/points.tsx`)
+5. Post-Trip Rating screen (`app/post-trip-rating.tsx`); multi-leg: Find next driver / destination
+6. (Optional) Next leg driver search (`app/next-leg-request.tsx`) — same `journeyId`, incremented `legIndex`
+7. Back to Home after submission
+8. Driver rating bonus (+5 on 5 stars) from backend after post-trip submit
+9. Points tab screen (`app/(tabs)/points.tsx`)
 
 ## What Is Implemented
 
@@ -44,6 +46,7 @@ Working app flow (phone-tested):
   - status text
   - boarding countdown timer
   - SOS button (UI only for now)
+  - multi-leg label + “change driver” when `journeyId` is present (signed-in passenger)
 - Rating UI:
   - 1-5 stars
   - optional review text
@@ -168,6 +171,10 @@ Week 2:
 - Session 17 completed:
   - Backend `GET /matching/demo-drivers` (JWT required): server-owned driver list placeholder for real matching later
   - App: `lib/matching-drivers.ts` (fallback + JSON validation); Ride Request fetches list after scan when signed in; offline / 401 keeps embedded fallback
+- Session 18 completed:
+  - Multi-leg handoffs: `public.journeys` + `rides.journey_id` / `rides.leg_index` (`supabase/journeys_multileg.sql`)
+  - `POST /journeys/register` (passenger JWT), `POST /journeys/complete` (end whole trip), `POST /rides/complete` accepts optional `journeyId` + `legIndex` with passenger/journey validation
+  - App: new `journeyId` per Ride Request when signed in (`lib/journey-id.ts`); `next-leg-request` screen; post-trip flow can chain legs or close journey; `distanceMiles` still mocked per leg (later session)
 
 ## Security-First Checklist (Always On)
 

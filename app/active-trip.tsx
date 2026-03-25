@@ -1,4 +1,4 @@
-import { Link, useLocalSearchParams, useRouter } from "expo-router";
+import { Link, type Href, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 
@@ -11,7 +11,12 @@ import { supabase } from "@/lib/supabase";
 
 export default function ActiveTripScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ driverName?: string; passengerId?: string }>();
+  const params = useLocalSearchParams<{
+    driverName?: string;
+    passengerId?: string;
+    journeyId?: string;
+    legIndex?: string;
+  }>();
   const driverName =
     typeof params.driverName === "string" && params.driverName.length > 0
       ? params.driverName
@@ -20,6 +25,23 @@ export default function ActiveTripScreen() {
     typeof params.passengerId === "string" && params.passengerId.length > 0
       ? params.passengerId
       : undefined;
+  const journeyId =
+    typeof params.journeyId === "string" && params.journeyId.length > 0
+      ? params.journeyId
+      : undefined;
+  const legIndexNum = (() => {
+    const raw = typeof params.legIndex === "string" ? params.legIndex : "1";
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) && n >= 1 ? n : 1;
+  })();
+
+  const backToSearchHref: Href =
+    journeyId && passengerId
+      ? {
+          pathname: "/next-leg-request",
+          params: { journeyId, legIndex: String(legIndexNum), passengerId },
+        }
+      : "/(tabs)/ride-request";
   const [secondsLeft, setSecondsLeft] = useState(120); // 2:00
   // Unique id for THIS trip session (used as `idempotency_key` on the backend).
   // We generate a real UUIDv4 so we can store it in `point_events.ride_id` (uuid column).
@@ -107,6 +129,9 @@ export default function ActiveTripScreen() {
       </View>
 
       <View style={styles.bottomCard}>
+        {journeyId ? (
+          <Text style={styles.legLabel}>Multi-leg trip · leg {legIndexNum}</Text>
+        ) : null}
         <Text style={styles.driverName}>Driver: {driverName}</Text>
         <Text style={styles.meta}>Car: Toyota Camry - Blue</Text>
         <Text style={styles.meta}>ETA to pickup: 2 mins</Text>
@@ -149,6 +174,7 @@ export default function ActiveTripScreen() {
                   wasZeroDetour: true,
                   distanceMiles: 2.2,
                   ...(passengerId ? { passengerId } : {}),
+                  ...(journeyId ? { journeyId, legIndex: legIndexNum } : {}),
                 }),
               });
 
@@ -159,15 +185,19 @@ export default function ActiveTripScreen() {
               const promptPassenger =
                 Boolean(passengerId) && shouldPromptPassengerRating(rideId);
 
+              const tripMeta =
+                journeyId && passengerId
+                  ? { journeyId, legIndex: String(legIndexNum), passengerId }
+                  : {};
               if (promptPassenger) {
                 router.push({
                   pathname: "/rate-passenger",
-                  params: { rideId, passengerId: passengerId!, driverName },
+                  params: { rideId, passengerId: passengerId!, driverName, ...tripMeta },
                 });
               } else {
                 router.push({
                   pathname: "/post-trip-rating",
-                  params: { rideId, driverName },
+                  params: { rideId, driverName, ...tripMeta },
                 });
               }
             } catch (e) {
@@ -190,8 +220,8 @@ export default function ActiveTripScreen() {
         </Pressable>
       </View>
 
-      <Link href="/(tabs)/ride-request" style={styles.link}>
-        Back to Ride Request
+      <Link href={backToSearchHref} style={styles.link}>
+        {journeyId ? "Change driver (back to search)" : "Back to Ride Request"}
       </Link>
       <Link href="/(tabs)" style={styles.linkSecondary}>
         Go to Home
@@ -265,6 +295,12 @@ const styles = StyleSheet.create({
     borderColor: "#e6ebf5",
     backgroundColor: "#ffffff",
     padding: 14,
+  },
+  legLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0f766e",
+    marginBottom: 6,
   },
   driverName: {
     fontSize: 18,

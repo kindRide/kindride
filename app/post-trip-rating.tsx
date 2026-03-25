@@ -2,11 +2,20 @@ import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { getJourneysCompleteUrlOrNull } from "@/lib/backend-api-urls";
+import { formatBackendErrorBody } from "@/lib/backend-error";
 import { awardPoints } from "@/lib/points-award";
+import { supabase } from "@/lib/supabase";
 
 export default function PostTripRatingScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ rideId?: string; driverName?: string }>();
+  const params = useLocalSearchParams<{
+    rideId?: string;
+    driverName?: string;
+    journeyId?: string;
+    legIndex?: string;
+    passengerId?: string;
+  }>();
 
   // Fallback rideId if you land on this screen directly (should not happen often).
   // Must be UUIDv4 compatible because backend stores it into `point_events.ride_id` (uuid).
@@ -27,6 +36,26 @@ export default function PostTripRatingScreen() {
     typeof params.driverName === "string" && params.driverName.length > 0
       ? params.driverName
       : "Aisha Bello";
+  const journeyId =
+    typeof params.journeyId === "string" && params.journeyId.length > 0 ? params.journeyId : "";
+  const passengerIdParam =
+    typeof params.passengerId === "string" && params.passengerId.length > 0
+      ? params.passengerId
+      : "";
+  const legIdx = (() => {
+    const n = parseInt(typeof params.legIndex === "string" ? params.legIndex : "1", 10);
+    return Number.isFinite(n) && n >= 1 ? n : 1;
+  })();
+  const isMultiLeg = Boolean(journeyId && passengerIdParam);
+  const nextLegHref = {
+    pathname: "/next-leg-request" as const,
+    params: {
+      journeyId,
+      passengerId: passengerIdParam,
+      legIndex: String(legIdx + 1),
+    },
+  };
+
   const currentUserRole: "driver" | "passenger" = "driver";
   const [rating, setRating] = useState(0);
   const [review, setReview] = useState("");
@@ -38,6 +67,45 @@ export default function PostTripRatingScreen() {
   const [fallbackMessage, setFallbackMessage] = useState("");
   const [backendErrorDetail, setBackendErrorDetail] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isEndingJourney, setIsEndingJourney] = useState(false);
+
+  const handleCompleteJourney = async () => {
+    if (!journeyId) return;
+    const url = getJourneysCompleteUrlOrNull();
+    if (!url) {
+      Alert.alert("Not configured", "Backend URL is missing (EXPO_PUBLIC_POINTS_API_URL).");
+      return;
+    }
+    if (!supabase) {
+      Alert.alert("Sign in", "Sign in end this journey on the server.");
+      return;
+    }
+    setIsEndingJourney(true);
+    try {
+      const token = (await supabase.auth.getSession()).data.session?.access_token;
+      if (!token) {
+        throw new Error("Sign in as the passenger to mark your destination.");
+      }
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ journeyId }),
+      });
+      const raw = await response.text().catch(() => "");
+      if (!response.ok) {
+        throw new Error(formatBackendErrorBody(raw, response.status));
+      }
+      router.replace("/(tabs)");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Could not complete journey.";
+      Alert.alert("Journey not closed", message);
+    } finally {
+      setIsEndingJourney(false);
+    }
+  };
 
   const handleSubmit = async () => {
     if (isSubmitting) return;
@@ -87,6 +155,11 @@ export default function PostTripRatingScreen() {
     <View style={styles.screen}>
       <Text style={styles.title}>Rate Your Trip</Text>
       <Text style={styles.subtitle}>How was your ride with {driverName}?</Text>
+      {isMultiLeg ? (
+        <Text style={styles.multiLegHint}>
+          Multi-leg trip (leg {legIdx}). You can find the next driver after this — or say you’ve arrived.
+        </Text>
+      ) : null}
 
       <View style={styles.starsRow}>
         {[1, 2, 3, 4, 5].map((star) => (
@@ -114,9 +187,19 @@ export default function PostTripRatingScreen() {
         </Text>
       </Pressable>
 
-      <Link href="/(tabs)" style={styles.skipLink}>
-        Skip
-      </Link>
+      <View style={styles.skipRow}>
+        {isMultiLeg ? (
+          <Pressable
+            onPress={() => router.push(nextLegHref)}
+            style={styles.skipSecondaryPress}
+          >
+            <Text style={styles.skipSecondaryText}>Find next driver (skip rating)</Text>
+          </Pressable>
+        ) : null}
+        <Link href="/(tabs)" style={styles.skipLink}>
+          Skip to home
+        </Link>
+      </View>
 
       {submitted ? (
         <View style={styles.successBlock}>
@@ -156,6 +239,25 @@ export default function PostTripRatingScreen() {
               >
                 <Text style={styles.pointsButtonText}>View Points</Text>
               </Pressable>
+              {isMultiLeg ? (
+                <>
+                  <Pressable
+                    onPress={() => router.push(nextLegHref)}
+                    style={styles.nextLegButton}
+                  >
+                    <Text style={styles.nextLegButtonText}>Find next driver</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleCompleteJourney}
+                    disabled={isEndingJourney}
+                    style={[styles.destButton, isEndingJourney && styles.destButtonDisabled]}
+                  >
+                    <Text style={styles.destButtonText}>
+                      {isEndingJourney ? "Closing…" : "I’ve reached my destination"}
+                    </Text>
+                  </Pressable>
+                </>
+              ) : null}
             </>
           ) : (
             <Text style={styles.passengerNote}>Points are shown for driver accounts only.</Text>
@@ -186,6 +288,13 @@ const styles = StyleSheet.create({
     marginTop: 8,
     color: "#4b587c",
     fontSize: 16,
+  },
+  multiLegHint: {
+    marginTop: 10,
+    fontSize: 14,
+    color: "#0f766e",
+    fontWeight: "600",
+    lineHeight: 20,
   },
   starsRow: {
     flexDirection: "row",
@@ -227,12 +336,25 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontSize: 15,
   },
-  skipLink: {
+  skipRow: {
     marginTop: 14,
+    gap: 10,
+    alignItems: "center",
+  },
+  skipLink: {
     textAlign: "center",
     color: "#4b587c",
     fontSize: 15,
     fontWeight: "600",
+  },
+  skipSecondaryPress: {
+    paddingVertical: 6,
+  },
+  skipSecondaryText: {
+    color: "#2563eb",
+    fontSize: 15,
+    fontWeight: "700",
+    textAlign: "center",
   },
   successText: {
     textAlign: "center",
@@ -299,5 +421,35 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontWeight: "700",
     fontSize: 14,
+  },
+  nextLegButton: {
+    backgroundColor: "#2563eb",
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    marginTop: 4,
+  },
+  nextLegButtonText: {
+    color: "#ffffff",
+    fontWeight: "700",
+    fontSize: 14,
+    textAlign: "center",
+  },
+  destButton: {
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    backgroundColor: "#ffffff",
+  },
+  destButtonDisabled: {
+    opacity: 0.55,
+  },
+  destButtonText: {
+    color: "#334155",
+    fontWeight: "700",
+    fontSize: 14,
+    textAlign: "center",
   },
 });

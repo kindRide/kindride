@@ -21,6 +21,8 @@ export default function RatePassengerScreen() {
     rideId?: string;
     passengerId?: string;
     driverName?: string;
+    journeyId?: string;
+    legIndex?: string;
   }>();
 
   const rideId =
@@ -41,9 +43,17 @@ export default function RatePassengerScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const goToDriverRating = () => {
+    const meta: Record<string, string> = {};
+    if (typeof params.journeyId === "string" && params.journeyId.length > 0) {
+      meta.journeyId = params.journeyId;
+    }
+    if (typeof params.legIndex === "string" && params.legIndex.length > 0) {
+      meta.legIndex = params.legIndex;
+    }
+    if (passengerId) meta.passengerId = passengerId;
     router.replace({
       pathname: "/post-trip-rating",
-      params: { rideId, driverName },
+      params: { rideId, driverName, ...meta },
     });
   };
 
