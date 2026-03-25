@@ -1,6 +1,6 @@
 # KindRide - Project Status
 
-Last updated: 2026-03-25 (Week 2 Session 19)
+Last updated: 2026-03-25 (Week 2 Session 20)
 Owner: Oluwafemi Adebayo Adeyemi
 
 ## Current Build State
@@ -48,6 +48,7 @@ Working app flow (phone-tested):
   - boarding countdown timer
   - SOS button (UI only for now)
   - multi-leg label + “change driver” when `journeyId` is present (signed-in passenger)
+  - GPS-assisted leg miles (foreground): save pickup position, set drop-off from current position → fills miles using haversine straight-line (`expo-location` + `lib/haversine-miles.ts`); user can still edit before End Trip
 - Rating UI:
   - 1-5 stars
   - optional review text
@@ -77,7 +78,7 @@ Working app flow (phone-tested):
 ## Not Implemented Yet (Planned)
 
 - Full app-wide Supabase authentication flow (only points screen has minimal auth currently)
-- Real map/GPS live tracking
+- Real map / road routing and live tracking (app has straight-line GPS estimate only for now)
 - Real geo / availability matching (replace `/matching/demo-drivers` implementation)
 - Push notifications
 - Real SOS integrations (Twilio/contacts)
@@ -150,7 +151,7 @@ Week 2:
     - 5-star rating adds +5 after multiplier
   - Kept local fallback formula consistent for debugging alignment
   - Founder note: `distanceMiles` means the passenger's trip distance (pickup -> dropoff) used for the distance points bonus.
-    Session 19+: miles are entered on Active Trip per leg (pickup→dropoff segment); GPS-driven distance can replace the input later.
+    Session 19+: miles are entered on Active Trip per leg (pickup→dropoff segment). Session 20: optional haversine fill from device GPS; road distance often higher than straight-line.
   - Scoring example (2.2 miles, 5 stars, zero-detour=true):
     - base + distance = 10 + (2.2 * 1) = 12.2
     - apply 1.5x multiplier => 12.2 * 1.5 = 18.3
@@ -180,6 +181,9 @@ Week 2:
   - Per-leg distance: Active Trip collects miles (0.1–500) and detour toggle (default from driver card intent); values stored on `rides` via `supabase/rides_leg_distance.sql` + `POST /rides/complete`
   - Backend API v0.6.0: validates leg miles; base points use entered `distanceMiles` and `wasZeroDetour`
   - `lib/points-award` calls `/points/rating-bonus` with `{ rideId, rating }` only; completed leg miles still passed through navigation for display / future UI
+- Session 20 completed:
+  - Active Trip: `expo-location` foreground permission + “Save pickup GPS” / “Set drop-off GPS → miles” using haversine miles (`lib/haversine-miles.ts`); `app.json` plugin with usage strings
+  - No backend change: `POST /rides/complete` still receives `distanceMiles` (edited or GPS-filled). Rebuild dev client / store builds after native dependency add
 
 ## Security-First Checklist (Always On)
 
@@ -207,4 +211,4 @@ Operations:
 
 ## Resume Prompt (Copy/Paste for Next Session)
 
-"We are continuing KindRide. Read PROJECT_STATUS.md first. Start Week 2 next session: add a real `rides` table and validate ride completion/ownership server-side before points award."
+"We are continuing KindRide. Read PROJECT_STATUS.md first. Next session ideas: optional road distance (OSRM / Directions API), or persist `pickup_lat/lng` / `dropoff_lat/lng` on `rides` if you want auditability."

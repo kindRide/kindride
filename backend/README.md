@@ -52,6 +52,8 @@ Use a real Supabase **session access token** in the app (`Authorization: Bearer 
 | `POST` | `/journeys/register` | Passenger JWT — register client `journeyId` (idempotent) |
 | `POST` | `/journeys/complete` | Passenger JWT — mark whole journey completed (no more legs) |
 
+**Distance source (mobile):** the app may fill `distanceMiles` from a **straight-line haversine** estimate between two GPS fixes (`expo-location`). Road distance is often larger; the backend only validates the numeric range.
+
 ## Example: complete ride + rating bonus
 
 Replace `YOUR_ACCESS_TOKEN` and UUIDs with real values:

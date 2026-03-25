@@ -28,6 +28,13 @@
     "plugins": [
       "expo-router",
       [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "KindRide uses your location to estimate this leg’s distance (straight-line GPS). You can still type miles manually.",
+          "locationAlwaysAndWhenInUsePermission": "KindRide uses your location to estimate this leg’s distance (straight-line GPS). You can still type miles manually."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",

@@ -1,12 +1,23 @@
 import { Link, type Href, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import * as Location from "expo-location";
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
 import {
   getPassengerReputationUrlOrNull,
   getRidesCompleteUrlOrNull,
 } from "@/lib/backend-api-urls";
 import { formatBackendErrorBody } from "@/lib/backend-error";
+import { clampLegMilesStraightLine, haversineMiles, type LatLng } from "@/lib/haversine-miles";
 import { shouldPromptPassengerRating } from "@/lib/passenger-rating-prompt";
 import { supabase } from "@/lib/supabase";
 
@@ -64,6 +75,10 @@ export default function ActiveTripScreen() {
   /** Miles for this leg only (pickup → dropoff segment). Entered before End Trip. */
   const [legMilesText, setLegMilesText] = useState("");
   const [wasZeroDetour, setWasZeroDetour] = useState(wasZeroDetourFromDriver);
+  const [pickupPoint, setPickupPoint] = useState<LatLng | null>(null);
+  const [dropoffPoint, setDropoffPoint] = useState<LatLng | null>(null);
+  const [gpsNote, setGpsNote] = useState("");
+  const [isGpsBusy, setIsGpsBusy] = useState(false);
   const [passengerRep, setPassengerRep] = useState<{
     total_score: number;
     rating_count: number;
@@ -77,6 +92,36 @@ export default function ActiveTripScreen() {
     }, 1000);
 
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (cancelled) return;
+        if (status !== "granted") {
+          setGpsNote("Location off or denied — type miles manually, or enable location in settings.");
+          return;
+        }
+        const loc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        if (cancelled) return;
+        setPickupPoint({
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+        });
+        setGpsNote("Pickup saved from GPS. At your drop-off, tap “Set drop-off from GPS” below.");
+      } catch {
+        if (!cancelled) {
+          setGpsNote("Could not read pickup GPS — use the button to retry or type miles.");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -122,6 +167,68 @@ export default function ActiveTripScreen() {
   const tripStatus =
     secondsLeft > 0 ? `Boarding now (${boardingTimeText})` : "Trip in Progress";
 
+  const savePickupFromGps = async () => {
+    setIsGpsBusy(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Location",
+          "Allow location to save pickup. You can still enter miles by hand."
+        );
+        return;
+      }
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      setPickupPoint({
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+      });
+      setGpsNote("Pickup updated from GPS. At drop-off, use “Set drop-off from GPS”.");
+    } catch {
+      setGpsNote("GPS error saving pickup — try again or type miles.");
+    } finally {
+      setIsGpsBusy(false);
+    }
+  };
+
+  const saveDropoffAndFillMiles = async () => {
+    setIsGpsBusy(true);
+    try {
+      const { status } = await Location.getForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Location",
+          "Allow location to estimate miles from GPS, or type miles manually."
+        );
+        return;
+      }
+      const origin = pickupPoint;
+      if (!origin) {
+        Alert.alert("Pickup missing", "Save pickup from GPS first (or tap retry below).");
+        return;
+      }
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const drop: LatLng = {
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+      };
+      setDropoffPoint(drop);
+      const straightMi = clampLegMilesStraightLine(haversineMiles(origin, drop));
+      setLegMilesText(String(straightMi));
+      setGpsNote(
+        `Straight-line GPS ≈ ${straightMi} mi (roads are often longer — edit the field if needed).`
+      );
+    } catch {
+      Alert.alert("GPS", "Could not read drop-off location.");
+    } finally {
+      setIsGpsBusy(false);
+    }
+  };
+
   return (
     <View style={styles.screen}>
       <View style={styles.headerRow}>
@@ -132,9 +239,10 @@ export default function ActiveTripScreen() {
       </View>
 
       <View style={styles.mapPlaceholder}>
-        <Text style={styles.mapPlaceholderTitle}>Map Placeholder</Text>
+        <Text style={styles.mapPlaceholderTitle}>Trip segment</Text>
         <Text style={styles.mapPlaceholderText}>
-          Live map and moving driver marker will be added in the next phase.
+          Use GPS below for a straight-line mile estimate (road routing can be added later), or type miles
+          yourself.
         </Text>
       </View>
 
@@ -156,6 +264,32 @@ export default function ActiveTripScreen() {
         ) : null}
         <Text style={styles.statusText}>{tripStatus}</Text>
         <Text style={styles.legDistanceLabel}>This leg’s miles (pickup → your drop-off)</Text>
+        {gpsNote ? <Text style={styles.gpsNote}>{gpsNote}</Text> : null}
+        {isGpsBusy ? (
+          <ActivityIndicator style={styles.gpsSpinner} color="#2563eb" />
+        ) : null}
+        <View style={styles.gpsButtonsRow}>
+          <Pressable
+            onPress={savePickupFromGps}
+            disabled={isGpsBusy}
+            style={[styles.gpsButton, isGpsBusy && styles.gpsButtonDisabled]}
+          >
+            <Text style={styles.gpsButtonText}>Save pickup GPS</Text>
+          </Pressable>
+          <Pressable
+            onPress={saveDropoffAndFillMiles}
+            disabled={isGpsBusy}
+            style={[styles.gpsButton, styles.gpsButtonPrimary, isGpsBusy && styles.gpsButtonDisabled]}
+          >
+            <Text style={styles.gpsButtonPrimaryText}>Set drop-off GPS → miles</Text>
+          </Pressable>
+        </View>
+        {pickupPoint ? (
+          <Text style={styles.gpsMeta}>
+            Pickup GPS saved
+            {dropoffPoint ? " · Drop-off GPS saved" : ""}
+          </Text>
+        ) : null}
         <TextInput
           value={legMilesText}
           onChangeText={setLegMilesText}
@@ -379,6 +513,56 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
     color: "#334155",
+  },
+  gpsNote: {
+    marginTop: 8,
+    fontSize: 13,
+    color: "#475569",
+    lineHeight: 18,
+  },
+  gpsSpinner: {
+    marginTop: 8,
+  },
+  gpsButtonsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 10,
+  },
+  gpsButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#93c5fd",
+    backgroundColor: "#eff6ff",
+    minWidth: "44%",
+    flexGrow: 1,
+  },
+  gpsButtonPrimary: {
+    backgroundColor: "#2563eb",
+    borderColor: "#2563eb",
+  },
+  gpsButtonDisabled: {
+    opacity: 0.55,
+  },
+  gpsButtonText: {
+    color: "#1d4ed8",
+    fontWeight: "700",
+    fontSize: 13,
+    textAlign: "center",
+  },
+  gpsButtonPrimaryText: {
+    color: "#ffffff",
+    fontWeight: "700",
+    fontSize: 13,
+    textAlign: "center",
+  },
+  gpsMeta: {
+    marginTop: 8,
+    fontSize: 12,
+    color: "#0f766e",
+    fontWeight: "600",
   },
   legMilesInput: {
     marginTop: 6,
