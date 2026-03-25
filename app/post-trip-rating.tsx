@@ -1,4 +1,4 @@
-import { Link, useRouter } from "expo-router";
+import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
@@ -6,6 +6,8 @@ import { awardPoints } from "@/lib/points-award";
 
 export default function PostTripRatingScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ rideId?: string }>();
+  const rideId = typeof params.rideId === "string" && params.rideId.length > 0 ? params.rideId : "demo-ride-001";
   const currentUserRole: "driver" | "passenger" = "driver";
   const [rating, setRating] = useState(0);
   const [review, setReview] = useState("");
@@ -22,7 +24,7 @@ export default function PostTripRatingScreen() {
     setIsSubmitting(true);
 
     const result = await awardPoints({
-      rideId: "demo-ride-001",
+      rideId,
       rating,
       wasZeroDetour: true,
       distanceMiles: 2.2,

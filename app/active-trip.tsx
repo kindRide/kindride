@@ -5,6 +5,11 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 export default function ActiveTripScreen() {
   const router = useRouter();
   const [secondsLeft, setSecondsLeft] = useState(120); // 2:00
+  // Unique id for THIS trip session (used as `idempotency_key` on the backend).
+  const [rideId] = useState(() => {
+    const rand = Math.random().toString(16).slice(2);
+    return `ride-${Date.now()}-${rand}`;
+  });
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -45,7 +50,12 @@ export default function ActiveTripScreen() {
         <Text style={styles.meta}>ETA to pickup: 2 mins</Text>
         <Text style={styles.statusText}>{tripStatus}</Text>
         <Pressable
-          onPress={() => router.push("/post-trip-rating")}
+          onPress={() =>
+            router.push({
+              pathname: "/post-trip-rating",
+              params: { rideId },
+            })
+          }
           style={styles.endTripButton}
         >
           <Text style={styles.endTripButtonText}>End Trip</Text>

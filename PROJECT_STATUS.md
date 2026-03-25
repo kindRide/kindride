@@ -1,6 +1,6 @@
 # KindRide - Project Status
 
-Last updated: 2026-03-25 (Week 2 Session 8)
+Last updated: 2026-03-25 (Week 2 Session 9)
 Owner: Oluwafemi Adebayo Adeyemi
 
 ## Current Build State
@@ -14,6 +14,7 @@ Week 2 Session 5 is complete.
 Week 2 Session 6 is complete.
 Week 2 Session 7 is complete.
 Week 2 Session 8 is complete.
+Week 2 Session 9 is complete.
 
 Working app flow (phone-tested):
 1. Home screen (`app/(tabs)/index.tsx`)
@@ -68,7 +69,7 @@ Working app flow (phone-tested):
 - Matching algorithm backend (FastAPI)
 - Push notifications
 - Real SOS integrations (Twilio/contacts)
-- Real trip `rideId` from app navigation state (still demo id in post-trip screen)
+- Real trip `rideId` from app navigation state (wired Active Trip → Post Trip Rating)
 - Driver identity verification
 - In-app camera recording and retention policy
 
@@ -113,9 +114,13 @@ Week 2:
   - Validated end-to-end mobile flow: phone uses Backend API when signed in; local fallback when unauthorized
   - Added explicit fallback reasons in app UI to reduce debugging guesswork
   - Added backend `/health/supabase` endpoint and clearer config error messages for `.env` issues
-- Session 9 target:
-  - Pass real `rideId` from trip flow; validate ride completion server-side when `rides` exists
-  - Remove client-side local fallback for production mode and enforce authenticated award path
+- Session 9 completed (this hour):
+  - Pass real `rideId` from trip flow into post-trip rating (backend idempotency uses it)
+  - Keep local fallback for now (so you can still debug during backend rollout)
+
+- Session 10 target:
+  - Validate ride completion/ownership server-side when the `rides` table exists
+  - Remove/disable local fallback for production mode so all awards require backend success
 
 ## Security-First Checklist (Always On)
 
