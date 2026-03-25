@@ -143,6 +143,11 @@ Week 2:
   - Kept local fallback formula consistent for debugging alignment
   - Founder note: `distanceMiles` means the passenger's trip distance (pickup -> dropoff) used for the distance points bonus.
     In the current MVP it is still mocked in `app/post-trip-rating.tsx` until real trip distance is wired from the ride completion flow.
+  - Scoring example (2.2 miles, 5 stars, zero-detour=true):
+    - base + distance = 10 + (2.2 * 1) = 12.2
+    - apply 1.5x multiplier => 12.2 * 1.5 = 18.3
+    - add 5-star bonus => 18.3 + 5 = 23.3
+    - round to integer => 23 points
 
 ## Security-First Checklist (Always On)
 
