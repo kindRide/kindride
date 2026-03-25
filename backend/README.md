@@ -1,12 +1,17 @@
-# KindRide Backend (Session 7 — Idempotent Supabase writes)
+# KindRide Backend (FastAPI + Supabase)
 
-The module docstring at the top of `main.py` explains the flow for a non-programmer founder: JWT verification, idempotency, and why the service role key stays on the server only.
+The module docstring at the top of `main.py` explains JWT verification, idempotency, and why the service role key stays on the server only.
 
 ## Run Locally
 
-1. Copy `backend/.env.example` to `backend/.env` and fill in three values from Supabase (**Project URL**, **service_role** key, **JWT Secret**). Never commit `.env`.
+1. Copy `backend/.env.example` to `backend/.env` and fill in values from Supabase (**Project URL**, **service_role** key, **JWT / JWKS** as documented in `.env.example`). Never commit `.env`.
 
-2. In the Supabase SQL Editor, run **`supabase/points_schema.sql`** (if not already), then **`supabase/points_idempotency.sql`** so `point_events` has an `idempotency_key` column and a unique index per driver + ride.
+2. In the Supabase SQL Editor, run these in order (skip any you already applied):
+
+   - `supabase/points_schema.sql` (if not already)
+   - `supabase/points_idempotency.sql` (`point_events.idempotency_key` + unique index)
+   - `supabase/rides_schema.sql` (minimal `rides` for completion checks)
+   - `supabase/passenger_ratings_schema.sql` (driver → passenger face ratings + cumulative reputation)
 
 ```bash
 cd backend
@@ -16,45 +21,67 @@ pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-For phone testing on the same Wi-Fi network, bind to all interfaces:
+For phone testing on the same Wi‑Fi network, bind to all interfaces:
 
 ```bash
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Set the app env var `EXPO_PUBLIC_POINTS_API_URL` to your laptop LAN IP, e.g.:
+Set the app env var **`EXPO_PUBLIC_POINTS_API_URL`** to the **points award** URL (the app derives other paths from this):
 
 ```env
 EXPO_PUBLIC_POINTS_API_URL=http://192.168.1.20:8000/points/award
 ```
 
-Use a **real** Supabase **anon JWT** in the app, and sign in on the Points flow so the post-rating call can send `Authorization: Bearer <access_token>`.
+Use a real Supabase **session access token** in the app (`Authorization: Bearer …`) where endpoints require auth.
 
 ## Endpoints
 
-- `GET /health`
-- `POST /points/award` — verifies JWT, awards once per (`driver`, `rideId`), updates `points` total + tier via service role
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/health` | Liveness |
+| `GET` | `/health/supabase` | PostgREST + service role check |
+| `POST` | `/rides/complete` | Mark ride completed; optional `passengerId`; awards base leg points |
+| `POST` | `/points/rating-bonus` | Deferred +5 for 5-star driver rating (after trip) |
+| `POST` | `/points/award` | Legacy full award in one call (prefer split flow above) |
+| `POST` | `/passengers/rate` | Driver rates passenger (smile / neutral / sad + optional comment) |
+| `GET` | `/passengers/{passenger_id}/reputation` | Aggregate score + count for a passenger |
 
-## Example Request
+## Example: complete ride + rating bonus
 
-Replace `YOUR_ACCESS_TOKEN` with a token from a signed-in Supabase session:
+Replace `YOUR_ACCESS_TOKEN` and UUIDs with real values:
 
 ```bash
-curl -X POST "http://127.0.0.1:8000/points/award" ^
+curl -X POST "http://127.0.0.1:8000/rides/complete" ^
   -H "Content-Type: application/json" ^
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" ^
-  -d "{\"rideId\":\"demo-ride-001\",\"rating\":5,\"wasZeroDetour\":true,\"distanceMiles\":2.2}"
+  -d "{\"rideId\":\"00000000-0000-4000-8000-000000000001\",\"wasZeroDetour\":true,\"distanceMiles\":2.2,\"passengerId\":\"PASSENGER-USER-UUID\"}"
 ```
 
-Repeat the same `rideId` and token: the second response returns the same `points_earned` with `"idempotent": true` and does not double the balance.
+```bash
+curl -X POST "http://127.0.0.1:8000/points/rating-bonus" ^
+  -H "Content-Type: application/json" ^
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" ^
+  -d "{\"rideId\":\"00000000-0000-4000-8000-000000000001\",\"rating\":5}"
+```
+
+## Example: rate passenger (after `rides` exists and is completed)
+
+```bash
+curl -X POST "http://127.0.0.1:8000/passengers/rate" ^
+  -H "Content-Type: application/json" ^
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" ^
+  -d "{\"rideId\":\"00000000-0000-4000-8000-000000000001\",\"face\":\"smile\",\"comment\":null}"
+```
 
 ## Implemented Security
 
-1. Supabase access JWT verified with `SUPABASE_JWT_SECRET`; driver id taken from token `sub`.
-2. Idempotency: unique `(driver_id, idempotency_key)` on `point_events` (`idempotency_key` = `rideId` from the request).
+1. Supabase access JWT verified (HS256 and/or JWKS); user id from `sub` where applicable.
+2. Points idempotency: unique `(driver_id, idempotency_key)` on `point_events`.
 3. Writes use `SUPABASE_SERVICE_ROLE_KEY` only on this server (PostgREST).
+4. `rides` completion and `passenger_ratings` validated against completed rides where required.
 
 ## Still TODO (later sessions)
 
-- Validate ride completion / ownership against a real `rides` table.
-- If `PATCH points` fails after `point_events` insert, add a repair job or single DB transaction/RPC.
+- If `PATCH points` fails after `point_events` insert, add a repair job or transactional RPC.
+- Tighten `GET /passengers/.../reputation` to matched / in-trip context only.

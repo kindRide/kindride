@@ -2,6 +2,10 @@ import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 
+import {
+  getPassengerReputationUrlOrNull,
+  getRidesCompleteUrlOrNull,
+} from "@/lib/backend-api-urls";
 import { shouldPromptPassengerRating } from "@/lib/passenger-rating-prompt";
 import { supabase } from "@/lib/supabase";
 
@@ -33,10 +37,7 @@ export default function ActiveTripScreen() {
     rating_count: number;
   } | null>(null);
 
-  const pointsApiUrl = process.env.EXPO_PUBLIC_POINTS_API_URL;
-  const ridesCompleteEndpoint = pointsApiUrl
-    ? pointsApiUrl.replace("/points/award", "/rides/complete")
-    : undefined;
+  const ridesCompleteEndpoint = getRidesCompleteUrlOrNull();
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -49,17 +50,14 @@ export default function ActiveTripScreen() {
   useEffect(() => {
     let cancelled = false;
     async function loadPassengerRep() {
-      if (!passengerId || !pointsApiUrl) {
+      const url = passengerId ? getPassengerReputationUrlOrNull(passengerId) : null;
+      if (!url) {
         setPassengerRep(null);
         return;
       }
       const sessionResult = supabase ? await supabase.auth.getSession() : null;
       const token = sessionResult?.data.session?.access_token;
       if (!token) return;
-      const url = pointsApiUrl.replace(
-        "/points/award",
-        `/passengers/${encodeURIComponent(passengerId)}/reputation`
-      );
       try {
         const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         if (!r.ok || cancelled) return;
@@ -81,7 +79,7 @@ export default function ActiveTripScreen() {
     return () => {
       cancelled = true;
     };
-  }, [passengerId, pointsApiUrl]);
+  }, [passengerId]);
 
   const boardingTimeText = useMemo(() => {
     const mins = Math.floor(secondsLeft / 60);

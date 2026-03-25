@@ -163,6 +163,7 @@ Week 2:
   - SQL: `supabase/passenger_ratings_schema.sql` — run in Supabase SQL Editor (tables + trigger updating cumulative `passenger_reputation`)
   - Backend: optional `passengerId` on `POST /rides/complete`; `POST /passengers/rate`; `GET /passengers/{passenger_id}/reputation`
   - App: signed-in requester UUID passed as `passengerId`; ~1-in-5 trips open rate-passenger before driver star rating; active trip shows passenger community score when available
+  - Session 16 follow-up (finish): centralized `lib/backend-api-urls.ts` + `lib/backend-error.ts` (strict URL + FastAPI error parsing); `backend/README.md` updated to list all endpoints and SQL order
 
 ## Security-First Checklist (Always On)
 

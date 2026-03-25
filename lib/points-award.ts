@@ -1,3 +1,5 @@
+import { getPointsRatingBonusUrl } from "@/lib/backend-api-urls";
+import { formatBackendErrorBody } from "@/lib/backend-error";
 import { supabase } from "@/lib/supabase";
 
 type AwardPointsInput = {
@@ -33,15 +35,10 @@ const calcLocalPoints = (
 };
 
 export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsResult> {
-  const pointsAwardEndpoint = process.env.EXPO_PUBLIC_POINTS_API_URL;
-  const endpoint = pointsAwardEndpoint?.replace("/points/award", "/points/rating-bonus");
+  const endpoint = getPointsRatingBonusUrl();
   // Production hardening: backend is REQUIRED.
   // We do not silently fall back to local points for awarding.
   // If anything fails, we throw and let the UI show an error.
-
-  if (!endpoint) {
-    throw new Error("Points API is not configured (EXPO_PUBLIC_POINTS_API_URL missing).");
-  }
 
   try {
     const sessionResult = supabase ? await supabase.auth.getSession() : null;
@@ -69,15 +66,7 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
 
     if (!response.ok) {
       const raw = await response.text().catch(() => "");
-      let detail = raw || `Backend responded ${response.status}`;
-      try {
-        const parsed = JSON.parse(raw);
-        detail =
-          parsed?.detail || parsed?.message || parsed?.error || detail;
-      } catch {
-        // keep raw text as detail
-      }
-      throw new Error(detail);
+      throw new Error(formatBackendErrorBody(raw, response.status));
     }
 
     const data = (await response.json()) as {

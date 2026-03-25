@@ -9,17 +9,11 @@ import {
   View,
 } from "react-native";
 
+import { getPassengersRateUrl } from "@/lib/backend-api-urls";
+import { formatBackendErrorBody } from "@/lib/backend-error";
 import { supabase } from "@/lib/supabase";
 
 type Face = "smile" | "neutral" | "sad";
-
-function passengersRateEndpoint(): string {
-  const award = process.env.EXPO_PUBLIC_POINTS_API_URL;
-  if (!award) {
-    throw new Error("EXPO_PUBLIC_POINTS_API_URL is not configured.");
-  }
-  return award.replace("/points/award", "/passengers/rate");
-}
 
 export default function RatePassengerScreen() {
   const router = useRouter();
@@ -63,7 +57,7 @@ export default function RatePassengerScreen() {
         Alert.alert("Sign in required", "Sign in as the driver before submitting.");
         return;
       }
-      const endpoint = passengersRateEndpoint();
+      const endpoint = getPassengersRateUrl();
       const trimmed = comment.trim();
       const response = await fetch(endpoint, {
         method: "POST",
@@ -79,7 +73,7 @@ export default function RatePassengerScreen() {
       });
       if (!response.ok) {
         const raw = await response.text().catch(() => "");
-        throw new Error(raw || `Request failed (${response.status})`);
+        throw new Error(formatBackendErrorBody(raw, response.status));
       }
       goToDriverRating();
     } catch (e) {
