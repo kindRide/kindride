@@ -54,6 +54,8 @@ Use a real Supabase **session access token** in the app (`Authorization: Bearer 
 
 **Distance source (mobile):** the app may fill `distanceMiles` from a **straight-line haversine** estimate between two GPS fixes (`expo-location`). Road distance is often larger; the backend only validates the numeric range.
 
+**Maps (mobile):** Active Trip uses `react-native-maps` with `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` merged into native config via root `app.config.js` (run a **native rebuild** after changing the key or adding the dependency).
+
 ## Example: complete ride + rating bonus
 
 Replace `YOUR_ACCESS_TOKEN` and UUIDs with real values:

@@ -1,9 +1,11 @@
 import { Link, type Href, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import * as Location from "expo-location";
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   StyleSheet,
   Switch,
@@ -164,6 +166,32 @@ export default function ActiveTripScreen() {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   }, [secondsLeft]);
 
+  const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY?.trim() ?? "";
+  const useGoogleProvider = googleMapsApiKey.length > 0;
+
+  const mapRegion = useMemo(() => {
+    const a = pickupPoint;
+    const b = dropoffPoint;
+    if (a && b) {
+      const lat = (a.latitude + b.latitude) / 2;
+      const lng = (a.longitude + b.longitude) / 2;
+      const latDelta = Math.max(Math.abs(a.latitude - b.latitude) * 2.4, 0.025);
+      const lngDelta = Math.max(Math.abs(a.longitude - b.longitude) * 2.4, 0.025);
+      return { latitude: lat, longitude: lng, latitudeDelta: latDelta, longitudeDelta: lngDelta };
+    }
+    if (a) {
+      return {
+        latitude: a.latitude,
+        longitude: a.longitude,
+        latitudeDelta: 0.06,
+        longitudeDelta: 0.06,
+      };
+    }
+    return { latitude: 37.78, longitude: -122.4, latitudeDelta: 0.12, longitudeDelta: 0.12 };
+  }, [pickupPoint, dropoffPoint]);
+
+  const mapRemountKey = `${pickupPoint?.latitude ?? ""},${pickupPoint?.longitude ?? ""}|${dropoffPoint?.latitude ?? ""},${dropoffPoint?.longitude ?? ""}`;
+
   const tripStatus =
     secondsLeft > 0 ? `Boarding now (${boardingTimeText})` : "Trip in Progress";
 
@@ -238,12 +266,45 @@ export default function ActiveTripScreen() {
         </Pressable>
       </View>
 
-      <View style={styles.mapPlaceholder}>
-        <Text style={styles.mapPlaceholderTitle}>Trip segment</Text>
-        <Text style={styles.mapPlaceholderText}>
-          Use GPS below for a straight-line mile estimate (road routing can be added later), or type miles
-          yourself.
-        </Text>
+      <View style={styles.mapWrap}>
+        {Platform.OS === "web" ? (
+          <View style={styles.mapPlaceholder}>
+            <Text style={styles.mapPlaceholderTitle}>Trip segment</Text>
+            <Text style={styles.mapPlaceholderText}>
+              Live maps run on iOS/Android builds. On web, use GPS buttons below or enter miles manually.
+            </Text>
+          </View>
+        ) : (
+          <MapView
+            key={mapRemountKey}
+            style={styles.map}
+            initialRegion={mapRegion}
+            provider={useGoogleProvider ? PROVIDER_GOOGLE : undefined}
+            showsUserLocation
+            showsMyLocationButton={false}
+          >
+            {pickupPoint ? (
+              <Marker coordinate={pickupPoint} title="Pickup" pinColor="#16a34a" />
+            ) : null}
+            {dropoffPoint ? (
+              <Marker coordinate={dropoffPoint} title="Drop-off" pinColor="#2563eb" />
+            ) : null}
+            {pickupPoint && dropoffPoint ? (
+              <Polyline
+                coordinates={[pickupPoint, dropoffPoint]}
+                strokeColor="#2563eb"
+                strokeWidth={3}
+              />
+            ) : null}
+          </MapView>
+        )}
+        <View style={styles.mapCaption} pointerEvents="none">
+          <Text style={styles.mapCaptionText}>
+            {useGoogleProvider
+              ? "Straight-line segment (not driving directions)."
+              : "Add EXPO_PUBLIC_GOOGLE_MAPS_API_KEY for Google tiles on device builds."}
+          </Text>
+        </View>
       </View>
 
       <View style={styles.bottomCard}>
@@ -446,12 +507,35 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "800",
   },
-  mapPlaceholder: {
+  mapWrap: {
     flex: 1,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: "#dbe4f5",
+    overflow: "hidden",
     backgroundColor: "#eaf0ff",
+  },
+  map: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  mapCaption: {
+    position: "absolute",
+    left: 8,
+    right: 8,
+    bottom: 8,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  mapCaptionText: {
+    fontSize: 12,
+    color: "#334155",
+    textAlign: "center",
+  },
+  mapPlaceholder: {
+    flex: 1,
+    minHeight: 200,
     alignItems: "center",
     justifyContent: "center",
     padding: 20,

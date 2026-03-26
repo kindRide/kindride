@@ -1,6 +1,6 @@
 # KindRide - Project Status
 
-Last updated: 2026-03-25 (Week 2 Session 20)
+Last updated: 2026-03-25 (Week 2 Session 21)
 Owner: Oluwafemi Adebayo Adeyemi
 
 ## Current Build State
@@ -24,6 +24,8 @@ Week 2 Session 16 is complete.
 Week 2 Session 17 is complete.
 Week 2 Session 18 is complete.
 Week 2 Session 19 is complete.
+Week 2 Session 20 is complete.
+Week 2 Session 21 is complete.
 
 Working app flow (phone-tested):
 1. Home screen (`app/(tabs)/index.tsx`)
@@ -49,6 +51,7 @@ Working app flow (phone-tested):
   - SOS button (UI only for now)
   - multi-leg label + “change driver” when `journeyId` is present (signed-in passenger)
   - GPS-assisted leg miles (foreground): save pickup position, set drop-off from current position → fills miles using haversine straight-line (`expo-location` + `lib/haversine-miles.ts`); user can still edit before End Trip
+  - Active Trip map (`react-native-maps`): pickup/drop-off markers + straight-line polyline on iOS/Android; `app.config.js` injects `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` for native Google Maps; web shows a short message (no map SDK in browser for this slice)
 - Rating UI:
   - 1-5 stars
   - optional review text
@@ -184,6 +187,9 @@ Week 2:
 - Session 20 completed:
   - Active Trip: `expo-location` foreground permission + “Save pickup GPS” / “Set drop-off GPS → miles” using haversine miles (`lib/haversine-miles.ts`); `app.json` plugin with usage strings
   - No backend change: `POST /rides/complete` still receives `distanceMiles` (edited or GPS-filled). Rebuild dev client / store builds after native dependency add
+- Session 21 completed:
+  - `react-native-maps` on Active Trip; `app.config.js` reads `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` for Android `googleMaps.apiKey` + iOS `googleMapsApiKey` at prebuild
+  - Rebuild native app after pull (`npx expo prebuild` / EAS or dev client) so Maps SDK + key are linked; enable **Maps SDK for iOS** on the same Google key when using `PROVIDER_GOOGLE` on iPhone
 
 ## Security-First Checklist (Always On)
 
@@ -211,4 +217,4 @@ Operations:
 
 ## Resume Prompt (Copy/Paste for Next Session)
 
-"We are continuing KindRide. Read PROJECT_STATUS.md first. Next session ideas: optional road distance (OSRM / Directions API), or persist `pickup_lat/lng` / `dropoff_lat/lng` on `rides` if you want auditability."
+"We are continuing KindRide. Read PROJECT_STATUS.md first. Next session ideas: Maps JavaScript API for Expo web map, road distance (Directions / Distance Matrix or OSRM), or persist GPS coordinates on `rides`."
