@@ -18,6 +18,8 @@ type AwardPointsResult = {
   backendErrorDetail?: string;
 };
 
+const requireBackend = (process.env.EXPO_PUBLIC_POINTS_REQUIRE_BACKEND ?? "false") === "true";
+
 const calcLocalPoints = (
   rating: number,
   wasZeroDetour: boolean,
@@ -36,17 +38,15 @@ const calcLocalPoints = (
 
 export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsResult> {
   const endpoint = getPointsRatingBonusUrl();
-  // Production hardening: backend is REQUIRED.
-  // We do not silently fall back to local points for awarding.
-  // If anything fails, we throw and let the UI show an error.
+  // When EXPO_PUBLIC_POINTS_REQUIRE_BACKEND=true, backend is REQUIRED and we throw on errors.
+  // Otherwise, we fall back to local scoring to keep demo flow moving.
 
   try {
     const sessionResult = supabase ? await supabase.auth.getSession() : null;
     const accessToken = sessionResult?.data.session?.access_token;
 
     const controller = new AbortController();
-    // First-time JWT verification via JWKS can be slightly slow; give the backend
-    // enough time to respond before we fall back to local points.
+    // First-time JWT verification via JWKS can be slightly slow.
     const timeoutId = setTimeout(() => controller.abort(), 45_000);
     const response = await fetch(endpoint, {
       method: "POST",
@@ -59,14 +59,29 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
     }).finally(() => clearTimeout(timeoutId));
 
     if (response.status === 401) {
-      throw new Error(
-        "Unauthorized: please sign in on the Points tab so backend can award points."
-      );
+      if (requireBackend) {
+        throw new Error(
+          "Unauthorized: please sign in on the Points tab so backend can award points."
+        );
+      }
+      return {
+        pointsEarned: calcLocalPoints(input.rating, input.wasZeroDetour, input.distanceMiles),
+        source: "local",
+        fallbackReason: "unauthorized",
+      };
     }
 
     if (!response.ok) {
       const raw = await response.text().catch(() => "");
-      throw new Error(formatBackendErrorBody(raw, response.status));
+      if (requireBackend) {
+        throw new Error(formatBackendErrorBody(raw, response.status));
+      }
+      return {
+        pointsEarned: calcLocalPoints(input.rating, input.wasZeroDetour, input.distanceMiles),
+        source: "local",
+        fallbackReason: "network_or_server",
+        backendErrorDetail: formatBackendErrorBody(raw, response.status),
+      };
     }
 
     const data = (await response.json()) as {
@@ -86,8 +101,16 @@ export async function awardPoints(input: AwardPointsInput): Promise<AwardPointsR
       backendErrorDetail: undefined,
     };
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Backend points request failed.";
-    throw new Error(message);
+    if (requireBackend) {
+      const message = err instanceof Error ? err.message : "Backend points request failed.";
+      throw new Error(message);
+    }
+    const detail = err instanceof Error ? err.message : "Backend points request failed.";
+    return {
+      pointsEarned: calcLocalPoints(input.rating, input.wasZeroDetour, input.distanceMiles),
+      source: "local",
+      fallbackReason: "network_or_server",
+      backendErrorDetail: detail,
+    };
   }
 }

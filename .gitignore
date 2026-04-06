@@ -40,6 +40,10 @@ __pycache__/
 *.py[cod]
 *.pyc
 
+# Local runtime logs (FastAPI / dev — do not commit)
+kindride.log
+backend/kindride.log
+
 # typescript
 *.tsbuildinfo
 

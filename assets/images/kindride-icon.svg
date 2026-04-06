@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" fill="none">
+  <defs>
+
+    <!-- Rounded-square background -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#0c1f3f"/>
+      <stop offset="100%" stop-color="#0d4a54"/>
+    </linearGradient>
+
+    <!-- Pin gradient -->
+    <linearGradient id="pinGrad" x1="15%" y1="0%" x2="85%" y2="100%">
+      <stop offset="0%"   stop-color="#1e3a5f"/>
+      <stop offset="50%"  stop-color="#0e6b7a"/>
+      <stop offset="100%" stop-color="#0d9488"/>
+    </linearGradient>
+
+    <!-- Heart gradient -->
+    <linearGradient id="heartGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#ccfbf1"/>
+    </linearGradient>
+
+    <!-- Spark gradient -->
+    <linearGradient id="sparkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#99f6e4"/>
+      <stop offset="100%" stop-color="#0d9488"/>
+    </linearGradient>
+
+    <!-- Pin glow -->
+    <filter id="pinGlow" x="-30%" y="-20%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16"
+        flood-color="#0d9488" flood-opacity="0.45"/>
+    </filter>
+
+    <!-- Top specular -->
+    <radialGradient id="sheen" cx="35%" cy="20%" r="55%">
+      <stop offset="0%"   stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+
+  </defs>
+
+  <!-- App icon background — rounded square -->
+  <rect width="500" height="500" rx="112" fill="url(#bgGrad)"/>
+
+  <!-- Subtle background texture ring -->
+  <circle cx="250" cy="230" r="210"
+    fill="none"
+    stroke="rgba(255,255,255,0.04)"
+    stroke-width="1"/>
+  <circle cx="250" cy="230" r="175"
+    fill="none"
+    stroke="rgba(255,255,255,0.03)"
+    stroke-width="1"/>
+
+  <!-- ── PIN ── centred, scaled to fit the square icon nicely -->
+  <path
+    d="M250,52
+       C169,52  102,116  102,196
+       C102,276  250,422  250,422
+       C250,422  398,276  398,196
+       C398,116  331,52  250,52 Z"
+    fill="url(#pinGrad)"
+    filter="url(#pinGlow)"
+  />
+
+  <!-- Specular sheen -->
+  <path
+    d="M250,52
+       C169,52  102,116  102,196
+       C102,208  104,220  107,230
+       C140,136  192,86  250,76
+       C308,86  360,136  393,230
+       C396,220  398,208  398,196
+       C398,116  331,52  250,52 Z"
+    fill="url(#sheen)"
+  />
+
+  <!-- Lower depth -->
+  <path
+    d="M250,422 C250,422 162,302 128,238
+       C152,302 192,358 230,398
+       C243,412 248,420 250,422Z"
+    fill="rgba(0,0,0,0.10)"
+  />
+
+  <!-- ── HEART ── -->
+  <path
+    d="M250,308
+       C224,293  152,262  152,208
+       C152,166  180,144  212,144
+       C233,144  247,155  250,170
+       C253,155  267,144  288,144
+       C320,144  348,166  348,208
+       C348,262  276,293  250,308 Z"
+    fill="url(#heartGrad)"
+  />
+
+  <!-- ── SPARK — jewel at heart tip ── -->
+  <circle cx="250" cy="304" r="9"   fill="url(#sparkGrad)" opacity="0.95"/>
+  <circle cx="250" cy="304" r="4"   fill="#ffffff"         opacity="0.85"/>
+
+</svg>

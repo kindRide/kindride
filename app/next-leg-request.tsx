@@ -8,25 +8,35 @@ import {
   Text,
   View,
 } from "react-native";
+import * as Location from "expo-location";
+import { useTranslation } from "react-i18next";
 
-import { getMatchingDemoDriversUrlOrNull } from "@/lib/backend-api-urls";
+import { getMatchingDemoDriversUrlOrNull, getMatchingSearchUrlOrNull } from "@/lib/backend-api-urls";
 import {
-  FALLBACK_DEMO_DRIVERS,
   type DriverCard,
+  type TravelDirection,
   parseDriverCardsFromApi,
 } from "@/lib/matching-drivers";
+import { directionFromPoints } from "@/lib/geo-direction";
+import { rememberDestination } from "@/lib/recent-destinations";
 import { supabase } from "@/lib/supabase";
 
 /**
  * After a leg ends, passenger searches again under the same journey (multi-leg handoff).
- * Does not re-register the journey — that happened on Ride Request.
+ * The journey is registered when the app decides a handoff is needed (Active Trip),
+ * or when the passenger explicitly continues. This screen only continues the search.
  */
 export default function NextLegRequestScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
   const params = useLocalSearchParams<{
     journeyId?: string;
     legIndex?: string;
     passengerId?: string;
+    destinationDirection?: string;
+    destinationLat?: string;
+    destinationLng?: string;
+    destinationLabel?: string;
   }>();
 
   const journeyId =
@@ -41,10 +51,60 @@ export default function NextLegRequestScreen() {
     typeof params.passengerId === "string" && params.passengerId.length > 0
       ? params.passengerId
       : "";
+  const destinationDirection = (() => {
+    const raw = typeof params.destinationDirection === "string" ? params.destinationDirection : "";
+    return raw === "north" || raw === "south" || raw === "east" || raw === "west"
+      ? (raw as TravelDirection)
+      : "north";
+  })();
+  const destinationLat = typeof params.destinationLat === "string" ? params.destinationLat : "";
+  const destinationLng = typeof params.destinationLng === "string" ? params.destinationLng : "";
+  const destinationLabel = typeof params.destinationLabel === "string" ? params.destinationLabel : "";
+
+  const [computedDirection, setComputedDirection] = useState<TravelDirection>(destinationDirection);
+  const [originPoint, setOriginPoint] = useState<{ latitude: number; longitude: number } | null>(null);
 
   const [isScanning, setIsScanning] = useState(true);
   const [secondsLeft, setSecondsLeft] = useState(150);
-  const [drivers, setDrivers] = useState<DriverCard[]>(FALLBACK_DEMO_DRIVERS);
+  const [drivers, setDrivers] = useState<DriverCard[]>([]);
+
+  // Current GPS + route direction toward final destination B (for matching).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted" || cancelled) {
+          setOriginPoint(null);
+          setComputedDirection(destinationDirection);
+          return;
+        }
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (cancelled) return;
+        setOriginPoint({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
+        const lat = Number(destinationLat);
+        const lng = Number(destinationLng);
+        if (Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0)) {
+          setComputedDirection(
+            directionFromPoints(
+              { latitude: loc.coords.latitude, longitude: loc.coords.longitude },
+              { latitude: lat, longitude: lng }
+            )
+          );
+        } else {
+          setComputedDirection(destinationDirection);
+        }
+      } catch {
+        if (!cancelled) {
+          setOriginPoint(null);
+          setComputedDirection(destinationDirection);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [destinationDirection, destinationLat, destinationLng]);
 
   useEffect(() => {
     const scanTimer = setTimeout(() => {
@@ -69,25 +129,46 @@ export default function NextLegRequestScreen() {
 
     let cancelled = false;
     async function loadMatchingList() {
-      const url = getMatchingDemoDriversUrlOrNull();
-      if (!url) return;
+      const searchUrl = getMatchingSearchUrlOrNull();
+      const demoUrl = getMatchingDemoDriversUrlOrNull();
+      let urlToUse = demoUrl;
+      if (searchUrl && originPoint) {
+        urlToUse = `${searchUrl}?originLat=${encodeURIComponent(String(originPoint.latitude))}&originLng=${encodeURIComponent(String(originPoint.longitude))}&destinationDirection=${encodeURIComponent(computedDirection)}`;
+        if (destinationLat && destinationLng && destinationLat !== "0" && destinationLng !== "0") {
+          urlToUse += `&destinationLat=${encodeURIComponent(destinationLat)}&destinationLng=${encodeURIComponent(destinationLng)}`;
+        }
+      }
+      if (!urlToUse) return;
 
       const accessToken = supabase
         ? (await supabase.auth.getSession()).data.session?.access_token
         : undefined;
 
       try {
-        const response = await fetch(url, {
+        let resolvedFromLive = Boolean(searchUrl && originPoint && urlToUse.startsWith(searchUrl));
+        let response = await fetch(urlToUse, {
           headers: {
             ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
           },
         });
+        if (cancelled) return;
+        if (!response.ok && resolvedFromLive && demoUrl) {
+          resolvedFromLive = false;
+          response = await fetch(demoUrl, {
+            headers: {
+              ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+            },
+          });
+        }
         if (cancelled || !response.ok) return;
         const data: unknown = await response.json();
         const parsed = parseDriverCardsFromApi(data);
-        if (parsed && !cancelled) {
-          setDrivers(parsed);
-        }
+        if (parsed === null || cancelled) return;
+        const filtered = parsed.filter((d) => d.headingDirection === computedDirection);
+        const nextList = filtered.length > 0 ? filtered : parsed;
+        setDrivers(
+          nextList.length > 0 ? nextList : []
+        );
       } catch {
         /* keep fallback */
       }
@@ -97,7 +178,7 @@ export default function NextLegRequestScreen() {
     return () => {
       cancelled = true;
     };
-  }, [isScanning]);
+  }, [isScanning, computedDirection, originPoint]);
 
   const countdownText = useMemo(() => {
     const mins = Math.floor(secondsLeft / 60);
@@ -108,10 +189,10 @@ export default function NextLegRequestScreen() {
   if (!journeyId || !passengerId) {
     return (
       <View style={styles.screen}>
-        <Text style={styles.title}>Next leg</Text>
-        <Text style={styles.timerText}>Missing journey details. Open Ride Request to start a trip.</Text>
+        <Text style={styles.title}>{t("nextLegTitle", "Next leg")}</Text>
+        <Text style={styles.timerText}>{t("missingJourneyDetails", "Missing journey details. Open Ride Request to start a trip.")}</Text>
         <Link href="/(tabs)" style={styles.cancelLink}>
-          Home
+          {t("home", "Home")}
         </Link>
       </View>
     );
@@ -135,7 +216,7 @@ export default function NextLegRequestScreen() {
         <View style={styles.cardContent}>
           <Text style={styles.driverName}>{item.name}</Text>
           <Text style={styles.metaText}>
-            {item.tier} · {item.etaMinutes} min · {item.distanceMiles} mi away
+            {item.tier} · {item.etaMinutes} {t("min", "min")} · {item.distanceMiles} {t("miAway", "mi away")}
           </Text>
           <View
             style={[
@@ -149,13 +230,21 @@ export default function NextLegRequestScreen() {
                 isZeroDetour ? styles.intentGoodText : styles.intentDetourText,
               ]}
             >
-              {isZeroDetour ? "Already heading your way" : "Willing to detour"}
+              {isZeroDetour ? t("alreadyHeadingYourWay") : t("willingToDetour")}
             </Text>
           </View>
         </View>
 
         <Pressable
           onPress={() => {
+            const lat = Number(destinationLat);
+            const lng = Number(destinationLng);
+            if (Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0)) {
+              const label =
+                destinationLabel.trim() ||
+                `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+              void rememberDestination({ label, latitude: lat, longitude: lng });
+            }
             router.push({
               pathname: "/active-trip",
               params: {
@@ -164,13 +253,17 @@ export default function NextLegRequestScreen() {
                 driverId: item.id,
                 driverName: item.name,
                 passengerId,
+                destinationDirection: computedDirection,
+                ...(destinationLat ? { destinationLat } : {}),
+                ...(destinationLng ? { destinationLng } : {}),
+                ...(destinationLabel ? { destinationLabel } : {}),
                 wasZeroDetour: item.intent === "already_going" ? "true" : "false",
               },
             });
           }}
           style={styles.requestButton}
         >
-          <Text style={styles.requestButtonText}>Continue with this driver</Text>
+          <Text style={styles.requestButtonText}>{t("continueWithDriver", "Continue with this driver")}</Text>
         </Pressable>
       </View>
     );
@@ -179,25 +272,33 @@ export default function NextLegRequestScreen() {
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
-        <Text style={styles.title}>Next leg</Text>
-        <Text style={styles.legHint}>Same trip · leg {legIndex}</Text>
+        <Text style={styles.title}>{t("nextLegTitle", "Next leg")}</Text>
+        <Text style={styles.legHint}>{t("sameTripLeg", "Same trip · leg {{legIndex}}", { legIndex })}</Text>
+        <Text style={styles.dirHint}>
+          {t("destinationLabel", "Destination: {{dest}}", { dest: destinationLabel ? destinationLabel : `${destinationLat || "?"}, ${destinationLng || "?"}` })}
+        </Text>
+        <Text style={styles.dirHint}>
+          {t("routeDirection", "Route direction (this leg): {{dir}}", { dir: computedDirection[0].toUpperCase() + computedDirection.slice(1) })}
+        </Text>
         {!isScanning ? (
-          <Text style={styles.timerText}>Searching... ({countdownText} remaining)</Text>
+          <Text style={styles.timerText}>
+            {t("searchingRemaining", "Searching... ({{time}} remaining)", { time: countdownText })}
+          </Text>
         ) : null}
       </View>
 
       {isScanning ? (
         <View style={styles.centerBlock}>
           <ActivityIndicator size="large" color="#2563eb" />
-          <Text style={styles.scanningTitle}>Finding your next driver…</Text>
+          <Text style={styles.scanningTitle}>{t("findingNextDriver", "Finding your next driver…")}</Text>
           <Text style={styles.scanningSubtitle}>
-            You can keep your journey open until you reach your final stop.
+            {t("matchingDriversHeading", "We are matching drivers heading toward your destination direction.")}
           </Text>
         </View>
       ) : drivers.length === 0 ? (
         <View style={styles.centerBlock}>
-          <Text style={styles.emptyTitle}>No drivers available right now</Text>
-          <Text style={styles.emptySubtitle}>Try again in a moment.</Text>
+          <Text style={styles.emptyTitle}>{t("noDriversAvailableNow", "No drivers available right now")}</Text>
+          <Text style={styles.emptySubtitle}>{t("tryAgainInAMoment", "Try again in a moment.")}</Text>
         </View>
       ) : (
         <FlatList
@@ -210,7 +311,7 @@ export default function NextLegRequestScreen() {
       )}
 
       <Link href="/(tabs)" style={styles.cancelLink}>
-        Cancel
+        {t("cancel")}
       </Link>
     </View>
   );
@@ -234,9 +335,16 @@ const styles = StyleSheet.create({
   },
   legHint: {
     marginTop: 4,
-    fontSize: 15,
+    fontSize: 14,
     color: "#0f766e",
     fontWeight: "600",
+  },
+  dirHint: {
+    marginTop: 3,
+    fontSize: 12,
+    color: "#64748b",
+    fontWeight: "600",
+    lineHeight: 18,
   },
   timerText: {
     marginTop: 6,
@@ -340,13 +448,16 @@ const styles = StyleSheet.create({
   requestButton: {
     backgroundColor: "#2563eb",
     borderRadius: 10,
-    paddingVertical: 9,
-    paddingHorizontal: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    minHeight: 42,
+    alignItems: "center",
+    justifyContent: "center",
   },
   requestButtonText: {
     color: "#ffffff",
     fontWeight: "700",
-    fontSize: 13,
+    fontSize: 14,
   },
   cancelLink: {
     marginTop: 10,

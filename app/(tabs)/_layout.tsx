@@ -31,10 +31,30 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="driver"
+        options={{
+          title: 'Driver',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="car.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="points"
         options={{
           title: 'Points',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="star.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: 'Settings',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="gearshape.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="ride-request"
+        options={{
+          href: null,
         }}
       />
     </Tabs>

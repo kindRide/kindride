@@ -1,4 +1,5 @@
 export type DriverTier = "Helper" | "Good Samaritan" | "Champion" | "Leader" | "Elite";
+export type TravelDirection = "north" | "south" | "east" | "west";
 
 export type DriverCard = {
   id: string;
@@ -7,6 +8,13 @@ export type DriverCard = {
   etaMinutes: number;
   distanceMiles: number;
   intent: "already_going" | "detour";
+  headingDirection: TravelDirection;
+  /** Server-ranked composite score (0–1); absent for offline fallback catalog. */
+  matchScore?: number;
+  /** True for founding cohort drivers (joined before cutoff). */
+  isFoundingDriver?: boolean;
+  /** True when driver has completed Stripe Identity verification. */
+  idVerified?: boolean;
 };
 
 const TIERS = new Set<DriverTier>([
@@ -17,37 +25,16 @@ const TIERS = new Set<DriverTier>([
   "Elite",
 ]);
 
-/** Same catalog as backend `/matching/demo-drivers` when offline or unauthenticated. */
-export const FALLBACK_DEMO_DRIVERS: DriverCard[] = [
-  {
-    id: "1",
-    name: "Aisha Bello",
-    tier: "Champion",
-    etaMinutes: 4,
-    distanceMiles: 1.1,
-    intent: "already_going",
-  },
-  {
-    id: "2",
-    name: "Daniel Kim",
-    tier: "Good Samaritan",
-    etaMinutes: 6,
-    distanceMiles: 1.8,
-    intent: "detour",
-  },
-  {
-    id: "3",
-    name: "Grace Martin",
-    tier: "Leader",
-    etaMinutes: 7,
-    distanceMiles: 2.2,
-    intent: "already_going",
-  },
-];
+/** Empty fallback — no dummy drivers shown when backend is unavailable. */
+export const FALLBACK_DEMO_DRIVERS: DriverCard[] = [];
 
 export function parseDriverCardsFromApi(data: unknown): DriverCard[] | null {
-  if (!Array.isArray(data) || data.length === 0) {
+  if (!Array.isArray(data)) {
     return null;
+  }
+  /** Valid API response with zero rows — do not treat as parse failure (avoids stale demo list). */
+  if (data.length === 0) {
+    return [];
   }
   const out: DriverCard[] = [];
   for (const row of data) {
@@ -61,6 +48,13 @@ export function parseDriverCardsFromApi(data: unknown): DriverCard[] | null {
     const etaMinutes = Number(r.etaMinutes);
     const distanceMiles = Number(r.distanceMiles);
     const intent = r.intent;
+    const headingDirection =
+      r.headingDirection === "north" ||
+      r.headingDirection === "south" ||
+      r.headingDirection === "east" ||
+      r.headingDirection === "west"
+        ? r.headingDirection
+        : "north";
     if (
       !id ||
       !name ||
@@ -71,6 +65,8 @@ export function parseDriverCardsFromApi(data: unknown): DriverCard[] | null {
     ) {
       continue;
     }
+    const matchScore =
+      typeof r.matchScore === "number" && Number.isFinite(r.matchScore) ? r.matchScore : undefined;
     out.push({
       id,
       name,
@@ -78,6 +74,10 @@ export function parseDriverCardsFromApi(data: unknown): DriverCard[] | null {
       etaMinutes,
       distanceMiles,
       intent,
+      headingDirection,
+      ...(matchScore !== undefined ? { matchScore } : {}),
+      ...(r.isFoundingDriver === true ? { isFoundingDriver: true } : {}),
+      ...(r.idVerified === true ? { idVerified: true } : {}),
     });
   }
   return out.length > 0 ? out : null;

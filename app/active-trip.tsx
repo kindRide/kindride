@@ -1,12 +1,12 @@
 import { Link, type Href, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import * as Location from "expo-location";
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import {
-  ActivityIndicator,
   Alert,
   Platform,
   Pressable,
+  Share,
   StyleSheet,
   Switch,
   Text,
@@ -14,28 +14,53 @@ import {
   View,
 } from "react-native";
 
+import SessionRecorder from "@/components/session-recorder/SessionRecorder";
+import TripSegmentMap from "@/components/trip-segment-map/TripSegmentMap";
 import {
+  getJourneysRegisterUrlOrNull,
+  getMatchingDemoDriversUrlOrNull,
+  getMatchingSearchUrlOrNull,
   getPassengerReputationUrlOrNull,
   getRidesCompleteUrlOrNull,
+  getRideStatusUrlOrNull,
+  getRidesShareTokenUrlOrNull,
 } from "@/lib/backend-api-urls";
 import { formatBackendErrorBody } from "@/lib/backend-error";
 import { clampLegMilesStraightLine, haversineMiles, type LatLng } from "@/lib/haversine-miles";
-import { shouldPromptPassengerRating } from "@/lib/passenger-rating-prompt";
+import { createJourneyId } from "@/lib/journey-id";
+import {
+  parseDriverCardsFromApi,
+  type DriverCard,
+  type TravelDirection,
+} from "@/lib/matching-drivers";
 import { supabase } from "@/lib/supabase";
 
 export default function ActiveTripScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
   const params = useLocalSearchParams<{
     driverName?: string;
+    driverId?: string;
     passengerId?: string;
     journeyId?: string;
     legIndex?: string;
     wasZeroDetour?: string;
+    needsHandoff?: string;
+    destinationDirection?: string;
+    destinationLat?: string;
+    destinationLng?: string;
+    destinationLabel?: string;
+    preMatchedNextDriverId?: string;
+    preMatchedNextDriverName?: string;
+    preMatchedNextDriverEtaMinutes?: string;
+    preMatchedNextDriverHeading?: string;
+    rideId?: string;
   }>();
+  const driverId = typeof params.driverId === "string" && params.driverId.length > 0 ? params.driverId : "";
   const driverName =
     typeof params.driverName === "string" && params.driverName.length > 0
       ? params.driverName
-      : "Aisha Bello";
+      : "";
   const passengerId =
     typeof params.passengerId === "string" && params.passengerId.length > 0
       ? params.passengerId
@@ -55,38 +80,343 @@ export default function ActiveTripScreen() {
       ? params.wasZeroDetour === "true"
       : true;
 
+  const needsHandoff =
+    typeof params.needsHandoff === "string" && params.needsHandoff.length > 0
+      ? params.needsHandoff === "true"
+      : false;
+  const destinationDirection = (() => {
+    const raw = typeof params.destinationDirection === "string" ? params.destinationDirection : "";
+    return raw === "north" || raw === "south" || raw === "east" || raw === "west"
+      ? (raw as TravelDirection)
+      : "north";
+  })();
+  const destinationLat = typeof params.destinationLat === "string" ? params.destinationLat : "";
+  const destinationLng = typeof params.destinationLng === "string" ? params.destinationLng : "";
+  const destinationLabel = typeof params.destinationLabel === "string" ? params.destinationLabel : "";
+
+  const [autoJourneyId, setAutoJourneyId] = useState<string | null>(journeyId ?? null);
+  const [autoLegIndex, setAutoLegIndex] = useState<number>(legIndexNum);
+  const [nextDriver, setNextDriver] = useState<DriverCard | null>(null);
+  const [isSearchingNextDriver, setIsSearchingNextDriver] = useState(false);
+  const [rideStatus, setRideStatus] = useState<string | null>(null);
+  const [ridePassengerId, setRidePassengerId] = useState<string | null>(null);
+
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [liveDriverLocation, setLiveDriverLocation] = useState<LatLng | null>(null);
+
+  useEffect(() => {
+    supabase?.auth.getSession().then(({ data }) => setCurrentUserId(data.session?.user?.id ?? null));
+  }, []);
+
+  useEffect(() => {
+    // If Ride Request pre-matched Driver B, display it immediately.
+    if (nextDriver) return;
+    const id =
+      typeof params.preMatchedNextDriverId === "string" ? params.preMatchedNextDriverId : "";
+    const name =
+      typeof params.preMatchedNextDriverName === "string" ? params.preMatchedNextDriverName : "";
+    const etaRaw =
+      typeof params.preMatchedNextDriverEtaMinutes === "string"
+        ? params.preMatchedNextDriverEtaMinutes
+        : "";
+    const etaMinutes = Number(etaRaw);
+    if (!id || !name || !Number.isFinite(etaMinutes)) return;
+    const headingRaw =
+      typeof params.preMatchedNextDriverHeading === "string"
+        ? params.preMatchedNextDriverHeading.trim().toLowerCase()
+        : "";
+    const headingDirection: TravelDirection =
+      headingRaw === "north" || headingRaw === "south" || headingRaw === "east" || headingRaw === "west"
+        ? headingRaw
+        : destinationDirection;
+    setNextDriver({
+      id,
+      name,
+      tier: "Helper",
+      etaMinutes,
+      distanceMiles: 0,
+      intent: "already_going",
+      headingDirection,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const backToSearchHref: Href =
-    journeyId && passengerId
+    autoJourneyId && passengerId
       ? {
           pathname: "/next-leg-request",
-          params: { journeyId, legIndex: String(legIndexNum), passengerId },
+          params: {
+            journeyId: autoJourneyId,
+            legIndex: String(autoLegIndex),
+            passengerId,
+            destinationDirection,
+            ...(destinationLat && destinationLng
+              ? {
+                  destinationLat,
+                  destinationLng,
+                  ...(destinationLabel ? { destinationLabel } : {}),
+                }
+              : {}),
+          },
         }
       : "/(tabs)/ride-request";
   const [secondsLeft, setSecondsLeft] = useState(120); // 2:00
-  // Unique id for THIS trip session (used as `idempotency_key` on the backend).
-  // We generate a real UUIDv4 so we can store it in `point_events.ride_id` (uuid column).
-  const [rideId] = useState(() => {
+  // Stable ride session id: reuse server `rides/start-search` id when passed from Ride Request; else new UUIDv4.
+  const rideId = useMemo(() => {
+    const raw = typeof params.rideId === "string" ? params.rideId.trim() : "";
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (raw && uuidRe.test(raw)) return raw;
     return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
       const r = Math.random() * 16;
       const v = c === "x" ? r : (r & 0x3) | 0x8;
       return Math.floor(v).toString(16);
     });
-  });
+  }, [params.rideId]);
 
   const [isCompletingRide, setIsCompletingRide] = useState(false);
+  const [tripStartedAtIso, setTripStartedAtIso] = useState<string | null>(null);
   /** Miles for this leg only (pickup → dropoff segment). Entered before End Trip. */
   const [legMilesText, setLegMilesText] = useState("");
   const [wasZeroDetour, setWasZeroDetour] = useState(wasZeroDetourFromDriver);
   const [pickupPoint, setPickupPoint] = useState<LatLng | null>(null);
   const [dropoffPoint, setDropoffPoint] = useState<LatLng | null>(null);
-  const [gpsNote, setGpsNote] = useState("");
-  const [isGpsBusy, setIsGpsBusy] = useState(false);
   const [passengerRep, setPassengerRep] = useState<{
     total_score: number;
     rating_count: number;
   } | null>(null);
 
+  const [shareToken, setShareToken] = useState<string | null>(null);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+
   const ridesCompleteEndpoint = getRidesCompleteUrlOrNull();
+
+  // Auto-start a journey ONLY when the app believes a handoff will be needed.
+  // This keeps multi-leg as a last resort, app-driven behavior.
+  useEffect(() => {
+    if (!needsHandoff || !passengerId) return;
+    if (autoJourneyId) return;
+
+    const url = getJourneysRegisterUrlOrNull();
+    if (!url || !supabase) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = (await supabase.auth.getSession()).data.session?.access_token;
+        if (!token || cancelled) return;
+        const newJourneyId = createJourneyId();
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ journeyId: newJourneyId }),
+        });
+        if (!resp.ok || cancelled) return;
+        setAutoJourneyId(newJourneyId);
+        setAutoLegIndex(1);
+      } catch {
+        // Keep running without multi-leg; passenger can still complete single leg.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [autoJourneyId, needsHandoff, passengerId]);
+
+  useEffect(() => {
+    if (!rideId) return;
+    const statusUrl = getRideStatusUrlOrNull(rideId);
+    if (!statusUrl || !supabase) return;
+
+    let cancelled = false;
+    const supabaseClient = supabase;
+    const fetchStatus = async () => {
+      if (!supabaseClient) return;
+      try {
+        const token = (await supabaseClient.auth.getSession()).data.session?.access_token;
+        if (!token || cancelled) return;
+        const resp = await fetch(statusUrl, {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+          },
+        });
+        if (!resp.ok) {
+          return;
+        }
+        const body = (await resp.json()) as { status?: string; passenger_id?: string | null };
+        if (cancelled) return;
+        setRideStatus(body.status ?? null);
+        if (body.passenger_id) setRidePassengerId(body.passenger_id);
+      } catch {
+        if (!cancelled) {
+          setRideStatus(null);
+        }
+      }
+    };
+
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [rideId]);
+
+  // Live GPS Watcher: If current user is the driver, broadcast location rapidly
+  useEffect(() => {
+    if (!currentUserId || currentUserId !== driverId) return;
+    let sub: Location.LocationSubscription | null = null;
+    let cancelled = false;
+
+    async function startWatch() {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") return;
+      
+      sub = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.High, timeInterval: 3000, distanceInterval: 5 },
+        (loc) => {
+          if (cancelled) return;
+          const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+          setLiveDriverLocation(coords);
+          
+          // Fast background heartbeat for active trip
+          supabase?.from("driver_presence").upsert({
+            driver_id: currentUserId,
+            current_lat: coords.latitude,
+            current_lng: coords.longitude,
+            updated_at: new Date().toISOString(),
+            is_available: false, // Hide from matching while in an active trip
+            display_name: driverName,
+            heading_direction: destinationDirection
+          }).catch(() => {});
+        }
+      );
+    }
+    
+    startWatch();
+    return () => {
+      cancelled = true;
+      if (sub) sub.remove();
+    };
+  }, [currentUserId, driverId, driverName, destinationDirection]);
+
+  // Live GPS Poller: If current user is the passenger, pull the driver's location rapidly
+  useEffect(() => {
+    if (!currentUserId || currentUserId === driverId || !driverId) return;
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled || !supabase) return;
+      const { data } = await supabase
+        .from("driver_presence")
+        .select("current_lat, current_lng")
+        .eq("driver_id", driverId)
+        .single();
+      if (data && !cancelled && data.current_lat && data.current_lng) {
+        setLiveDriverLocation({ latitude: data.current_lat, longitude: data.current_lng });
+      }
+    };
+    poll();
+    const intervalId = setInterval(poll, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [currentUserId, driverId]);
+
+  // Background search for the next driver while riding with current driver.
+  // We only do this when multi-leg is active (autoJourneyId) and after boarding countdown ends.
+  useEffect(() => {
+    if (!autoJourneyId || !passengerId) return;
+    if (secondsLeft > 0) return;
+    // If we already pre-matched a next driver, no need to poll.
+    if (nextDriver) return;
+
+    const demoUrl = getMatchingDemoDriversUrlOrNull();
+    const searchUrl = getMatchingSearchUrlOrNull();
+    if (!demoUrl && !searchUrl) return;
+
+    let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    async function poll() {
+      if (cancelled) return;
+      setIsSearchingNextDriver(true);
+      try {
+        const accessToken = supabase ? (await supabase.auth.getSession()).data.session?.access_token : undefined;
+
+        let urlToUse: string | null = null;
+        let usedLiveSearch = false;
+        try {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status === "granted" && searchUrl) {
+            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+            if (!cancelled) {
+              urlToUse = `${searchUrl}?originLat=${encodeURIComponent(String(loc.coords.latitude))}&originLng=${encodeURIComponent(
+                String(loc.coords.longitude)
+              )}&destinationDirection=${encodeURIComponent(destinationDirection)}`;
+              usedLiveSearch = true;
+            }
+          }
+        } catch {
+          // Fall through to demo URL.
+        }
+        if (!urlToUse) {
+          urlToUse = demoUrl;
+        }
+        if (!urlToUse || cancelled) return;
+
+        let resp = await fetch(urlToUse, {
+          headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+        });
+        if (cancelled) return;
+
+        if (!resp.ok && usedLiveSearch && demoUrl) {
+          usedLiveSearch = false;
+          resp = await fetch(demoUrl, {
+            headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+          });
+        }
+
+        if (cancelled) return;
+        const data: unknown = resp.ok ? await resp.json() : null;
+        const parsed = data ? parseDriverCardsFromApi(data) : null;
+        let list: DriverCard[];
+        if (parsed !== null) {
+          list = parsed;
+        } else if (usedLiveSearch) {
+          list = [];
+        } else {
+          list = [];
+        }
+        const candidate =
+          list.find(
+            (d) =>
+              (driverId ? d.id !== driverId : true) &&
+              d.headingDirection === destinationDirection
+          ) ?? null;
+        if (candidate && !cancelled) {
+          setNextDriver(candidate);
+        }
+      } catch {
+        // ignore; keep polling
+      } finally {
+        if (!cancelled) setIsSearchingNextDriver(false);
+      }
+    }
+
+    poll();
+    intervalId = setInterval(poll, 15_000);
+    return () => {
+      cancelled = true;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [autoJourneyId, passengerId, secondsLeft, nextDriver, driverId, destinationDirection]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -97,15 +427,19 @@ export default function ActiveTripScreen() {
   }, []);
 
   useEffect(() => {
+    // Mark trip start time when boarding countdown finishes.
+    if (secondsLeft === 0 && !tripStartedAtIso) {
+      setTripStartedAtIso(new Date().toISOString());
+    }
+  }, [secondsLeft, tripStartedAtIso]);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (cancelled) return;
-        if (status !== "granted") {
-          setGpsNote("Location off or denied — type miles manually, or enable location in settings.");
-          return;
-        }
+        if (status !== "granted") return;
         const loc = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
         });
@@ -114,11 +448,8 @@ export default function ActiveTripScreen() {
           latitude: loc.coords.latitude,
           longitude: loc.coords.longitude,
         });
-        setGpsNote("Pickup saved from GPS. At your drop-off, tap “Set drop-off from GPS” below.");
       } catch {
-        if (!cancelled) {
-          setGpsNote("Could not read pickup GPS — use the button to retry or type miles.");
-        }
+        // GPS unavailable — pickup will be captured at End Trip instead
       }
     })();
     return () => {
@@ -170,7 +501,7 @@ export default function ActiveTripScreen() {
   const useGoogleProvider = googleMapsApiKey.length > 0;
 
   const mapRegion = useMemo(() => {
-    const a = pickupPoint;
+    const a = liveDriverLocation || pickupPoint;
     const b = dropoffPoint;
     if (a && b) {
       const lat = (a.latitude + b.latitude) / 2;
@@ -190,198 +521,199 @@ export default function ActiveTripScreen() {
     return { latitude: 37.78, longitude: -122.4, latitudeDelta: 0.12, longitudeDelta: 0.12 };
   }, [pickupPoint, dropoffPoint]);
 
-  const mapRemountKey = `${pickupPoint?.latitude ?? ""},${pickupPoint?.longitude ?? ""}|${dropoffPoint?.latitude ?? ""},${dropoffPoint?.longitude ?? ""}`;
+  const shareTrip = async () => {
+    if (!rideId) {
+      Alert.alert(t("shareTrip"), t("shareTripNoRideId"));
+      return;
+    }
+
+    const url = getRidesShareTokenUrlOrNull();
+    if (!url) {
+      Alert.alert(t("shareTrip"), t("backendNotConfigured"));
+      return;
+    }
+
+    const sessionResult = supabase ? await supabase.auth.getSession() : null;
+    const token = sessionResult?.data.session?.access_token;
+    if (!token) {
+      Alert.alert(t("shareTrip"), t("shareTripSignInRequired"));
+      return;
+    }
+
+    setShareError(null);
+    setIsSharing(true);
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ rideId }),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(formatBackendErrorBody(text, response.status));
+      }
+      const body = JSON.parse(text) as { rideId: string; shareToken: string };
+      const tokenGot = body.shareToken;
+      const deepLink = `kindride://ride-share?shareToken=${encodeURIComponent(tokenGot)}`;
+
+      setShareToken(tokenGot);
+      setShareUrl(deepLink);
+
+      await Share.share({ message: `Track my ride: ${deepLink}` });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : t("shareTripLinkError");
+      setShareError(message);
+      Alert.alert(t("shareTrip"), message);
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  // Avoid remounting the map on every GPS tweak (prevents full-screen “blink”).
 
   const tripStatus =
-    secondsLeft > 0 ? `Boarding now (${boardingTimeText})` : "Trip in Progress";
+    secondsLeft > 0 ? t("boardingNow", { time: boardingTimeText }) : t("tripInProgress");
 
-  const savePickupFromGps = async () => {
-    setIsGpsBusy(true);
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert(
-          "Location",
-          "Allow location to save pickup. You can still enter miles by hand."
-        );
-        return;
-      }
-      const loc = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-      setPickupPoint({
-        latitude: loc.coords.latitude,
-        longitude: loc.coords.longitude,
-      });
-      setGpsNote("Pickup updated from GPS. At drop-off, use “Set drop-off from GPS”.");
-    } catch {
-      setGpsNote("GPS error saving pickup — try again or type miles.");
-    } finally {
-      setIsGpsBusy(false);
-    }
-  };
-
-  const saveDropoffAndFillMiles = async () => {
-    setIsGpsBusy(true);
-    try {
-      const { status } = await Location.getForegroundPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert(
-          "Location",
-          "Allow location to estimate miles from GPS, or type miles manually."
-        );
-        return;
-      }
-      const origin = pickupPoint;
-      if (!origin) {
-        Alert.alert("Pickup missing", "Save pickup from GPS first (or tap retry below).");
-        return;
-      }
-      const loc = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-      const drop: LatLng = {
-        latitude: loc.coords.latitude,
-        longitude: loc.coords.longitude,
-      };
-      setDropoffPoint(drop);
-      const straightMi = clampLegMilesStraightLine(haversineMiles(origin, drop));
-      setLegMilesText(String(straightMi));
-      setGpsNote(
-        `Straight-line GPS ≈ ${straightMi} mi (roads are often longer — edit the field if needed).`
-      );
-    } catch {
-      Alert.alert("GPS", "Could not read drop-off location.");
-    } finally {
-      setIsGpsBusy(false);
-    }
-  };
 
   return (
     <View style={styles.screen}>
       <View style={styles.headerRow}>
-        <Text style={styles.title}>Active Trip</Text>
-        <Pressable style={styles.sosButton}>
-          <Text style={styles.sosButtonText}>SOS</Text>
-        </Pressable>
+        <Text style={styles.title}>{t("activeTrip")}</Text>
+        <Link href="/sos" asChild>
+          <Pressable style={styles.sosButton}>
+            <Text style={styles.sosButtonText}>SOS</Text>
+          </Pressable>
+        </Link>
       </View>
 
       <View style={styles.mapWrap}>
         {Platform.OS === "web" ? (
           <View style={styles.mapPlaceholder}>
-            <Text style={styles.mapPlaceholderTitle}>Trip segment</Text>
+            <Text style={styles.mapPlaceholderTitle}>{t("tripSegment")}</Text>
             <Text style={styles.mapPlaceholderText}>
-              Live maps run on iOS/Android builds. On web, use GPS buttons below or enter miles manually.
+              {t("liveMapsHint")}
             </Text>
           </View>
         ) : (
-          <MapView
-            key={mapRemountKey}
+          <TripSegmentMap
+            key="trip-segment-map"
             style={styles.map}
-            initialRegion={mapRegion}
-            provider={useGoogleProvider ? PROVIDER_GOOGLE : undefined}
-            showsUserLocation
-            showsMyLocationButton={false}
-          >
-            {pickupPoint ? (
-              <Marker coordinate={pickupPoint} title="Pickup" pinColor="#16a34a" />
-            ) : null}
-            {dropoffPoint ? (
-              <Marker coordinate={dropoffPoint} title="Drop-off" pinColor="#2563eb" />
-            ) : null}
-            {pickupPoint && dropoffPoint ? (
-              <Polyline
-                coordinates={[pickupPoint, dropoffPoint]}
-                strokeColor="#2563eb"
-                strokeWidth={3}
-              />
-            ) : null}
-          </MapView>
+            mapRegion={mapRegion}
+            pickupPoint={pickupPoint}
+            dropoffPoint={dropoffPoint}
+            driverLocation={liveDriverLocation}
+            useGoogleProvider={useGoogleProvider}
+          />
         )}
         <View style={styles.mapCaption} pointerEvents="none">
           <Text style={styles.mapCaptionText}>
             {useGoogleProvider
-              ? "Straight-line segment (not driving directions)."
-              : "Add EXPO_PUBLIC_GOOGLE_MAPS_API_KEY for Google tiles on device builds."}
+              ? t("straightLineHint")
+              : t("addGoogleMapsKeyHint")}
           </Text>
         </View>
       </View>
 
       <View style={styles.bottomCard}>
-        {journeyId ? (
-          <Text style={styles.legLabel}>Multi-leg trip · leg {legIndexNum}</Text>
+        {secondsLeft === 0 && <SessionRecorder isActive={true} rideId={rideId} />}
+        {autoJourneyId ? (
+          <Text style={[styles.legLabel, secondsLeft === 0 && { marginTop: 12 }]}>{t("multiLegLegX", { leg: autoLegIndex })}</Text>
         ) : null}
-        <Text style={styles.driverName}>Driver: {driverName}</Text>
-        <Text style={styles.meta}>Car: Toyota Camry - Blue</Text>
-        <Text style={styles.meta}>ETA to pickup: 2 mins</Text>
+        {destinationLabel || (destinationLat && destinationLng) ? (
+          <Text style={styles.destText}>
+            {t("destination", { dest: destinationLabel ? destinationLabel : `${destinationLat}, ${destinationLng}` })}
+          </Text>
+        ) : null}
+        <Text style={styles.driverName}>{t("driverName", { name: driverName })}</Text>
+        <Text style={styles.meta}>{t("carInfo")}</Text>
+        <Text style={styles.meta}>{t("etaToPickup")}</Text>
+        {autoJourneyId ? (
+          <Text style={styles.repHint}>
+            {nextDriver
+              ? t("nextDriverFound", { name: nextDriver.name, eta: nextDriver.etaMinutes })
+              : isSearchingNextDriver
+                ? t("searchingNextDriver")
+                : t("handoffSearchActive")}
+          </Text>
+        ) : null}
         {passengerRep && passengerRep.rating_count > 0 ? (
           <Text style={styles.repText}>
-            Passenger community score: {passengerRep.total_score} · from{" "}
-            {passengerRep.rating_count} driver rating
-            {passengerRep.rating_count === 1 ? "" : "s"}
+            {t("passengerReputation", {
+              score: passengerRep.total_score,
+              count: passengerRep.rating_count,
+              s: passengerRep.rating_count === 1 ? "" : "s"
+            })}
           </Text>
         ) : passengerId ? (
-          <Text style={styles.repHint}>Passenger profile: no ratings yet (or sign in to load).</Text>
+          <Text style={styles.repHint}>{t("passengerProfileNoRatings")}</Text>
         ) : null}
         <Text style={styles.statusText}>{tripStatus}</Text>
-        <Text style={styles.legDistanceLabel}>This leg’s miles (pickup → your drop-off)</Text>
-        {gpsNote ? <Text style={styles.gpsNote}>{gpsNote}</Text> : null}
-        {isGpsBusy ? (
-          <ActivityIndicator style={styles.gpsSpinner} color="#2563eb" />
-        ) : null}
-        <View style={styles.gpsButtonsRow}>
-          <Pressable
-            onPress={savePickupFromGps}
-            disabled={isGpsBusy}
-            style={[styles.gpsButton, isGpsBusy && styles.gpsButtonDisabled]}
-          >
-            <Text style={styles.gpsButtonText}>Save pickup GPS</Text>
-          </Pressable>
-          <Pressable
-            onPress={saveDropoffAndFillMiles}
-            disabled={isGpsBusy}
-            style={[styles.gpsButton, styles.gpsButtonPrimary, isGpsBusy && styles.gpsButtonDisabled]}
-          >
-            <Text style={styles.gpsButtonPrimaryText}>Set drop-off GPS → miles</Text>
-          </Pressable>
-        </View>
-        {pickupPoint ? (
-          <Text style={styles.gpsMeta}>
-            Pickup GPS saved
-            {dropoffPoint ? " · Drop-off GPS saved" : ""}
-          </Text>
-        ) : null}
+        <Text style={styles.legDistanceLabel}>
+          {autoJourneyId ? t("thisLegMiles") : t("tripMiles")}
+        </Text>
         <TextInput
           value={legMilesText}
           onChangeText={setLegMilesText}
-          placeholder="e.g. 2.2"
+          placeholder="Auto-filled on End Trip"
           keyboardType="decimal-pad"
           style={styles.legMilesInput}
         />
         <Text style={styles.detourHint}>
-          Zero/low detour (driver was already heading this way) affects the points multiplier.
+          {t("detourHint")}
         </Text>
         <View style={styles.switchRow}>
           <Switch value={wasZeroDetour} onValueChange={setWasZeroDetour} />
-          <Text style={styles.switchLabel}>Minimal detour / already going this way</Text>
+          <Text style={styles.switchLabel}>{t("minimalDetour")}</Text>
         </View>
         <Pressable
           onPress={async () => {
             if (isCompletingRide) return;
             if (!ridesCompleteEndpoint) {
               Alert.alert(
-                "Backend not configured",
-                "EXPO_PUBLIC_POINTS_API_URL is missing, so we cannot mark the ride as completed."
+                t("backendNotConfigured"),
+                t("backendMissingEndpoint")
               );
               return;
             }
 
-            const normalizedMiles = legMilesText.trim().replace(",", ".");
+            if (rideStatus && !["accepted", "in_progress", "completed"].includes(rideStatus)) {
+              Alert.alert(
+                t("rideNotReady", "Ride not ready"),
+                t("rideStatusWait", "Ride status is '{{status}}'. Please wait for the driver to accept this ride before ending.", { status: rideStatus })
+              );
+              return;
+            }
+
+            // Auto-calculate drop-off GPS and miles if not already set
+            let resolvedMilesText = legMilesText;
+            let resolvedDropoff = dropoffPoint;
+            if (!resolvedDropoff || !resolvedMilesText.trim()) {
+              try {
+                const { status } = await Location.requestForegroundPermissionsAsync();
+                if (status === "granted") {
+                  const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                  resolvedDropoff = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+                  setDropoffPoint(resolvedDropoff);
+                  if (pickupPoint) {
+                    const straightMi = clampLegMilesStraightLine(haversineMiles(pickupPoint, resolvedDropoff));
+                    resolvedMilesText = String(straightMi);
+                    setLegMilesText(resolvedMilesText);
+                  }
+                }
+              } catch {
+                // GPS unavailable — fall through to manual validation below
+              }
+            }
+
+            const normalizedMiles = resolvedMilesText.trim().replace(",", ".");
             const miles = parseFloat(normalizedMiles);
             if (!Number.isFinite(miles) || miles < 0.1 || miles > 500) {
               Alert.alert(
-                "Trip distance",
-                "Enter miles for this leg only: a number from 0.1 to 500 (e.g. 2.2)."
+                t("tripDistance"),
+                t("enterMilesWarning")
               );
               return;
             }
@@ -393,19 +725,42 @@ export default function ActiveTripScreen() {
                 : null;
               const accessToken = sessionResult?.data.session?.access_token;
 
+              const startedAtToSend =
+                tripStartedAtIso ?? (secondsLeft === 0 ? new Date().toISOString() : null);
+
+              const destLatNum = Number(destinationLat);
+              const destLngNum = Number(destinationLng);
+              const hasDest =
+                destinationLat.length > 0 &&
+                destinationLng.length > 0 &&
+                Number.isFinite(destLatNum) &&
+                Number.isFinite(destLngNum);
+
+              const payload = {
+                rideId,
+                wasZeroDetour,
+                distanceMiles: miles,
+                ...(pickupPoint ? { pickupLat: pickupPoint.latitude, pickupLng: pickupPoint.longitude } : {}),
+                ...(resolvedDropoff ? { dropoffLat: resolvedDropoff.latitude, dropoffLng: resolvedDropoff.longitude } : {}),
+                ...(passengerId ? { passengerId } : {}),
+                ...(autoJourneyId ? { journeyId: autoJourneyId, legIndex: autoLegIndex } : {}),
+                ...(hasDest
+                  ? {
+                      destinationLat: destLatNum,
+                      destinationLng: destLngNum,
+                      ...(destinationLabel ? { destinationLabel } : {}),
+                    }
+                  : {}),
+                ...(startedAtToSend ? { startedAt: startedAtToSend } : {}),
+              };
+
               const response = await fetch(ridesCompleteEndpoint, {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",
                   ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
                 },
-                body: JSON.stringify({
-                  rideId,
-                  wasZeroDetour,
-                  distanceMiles: miles,
-                  ...(passengerId ? { passengerId } : {}),
-                  ...(journeyId ? { journeyId, legIndex: legIndexNum } : {}),
-                }),
+                body: JSON.stringify(payload),
               });
 
               const rawErr = await response.text().catch(() => "");
@@ -413,39 +768,41 @@ export default function ActiveTripScreen() {
                 throw new Error(formatBackendErrorBody(rawErr, response.status));
               }
 
-              const promptPassenger =
-                Boolean(passengerId) && shouldPromptPassengerRating(rideId);
-
+              // Driver-only: POST /passengers/rate requires JWT driver_id == rides.driver_id.
+              // This screen runs as the passenger — never open rate-passenger here (would 400).
               const ratingMeta = {
                 distanceMiles: String(miles),
                 wasZeroDetour: wasZeroDetour ? "true" : "false",
               };
-              const tripMeta =
-                journeyId && passengerId
-                  ? {
-                      journeyId,
-                      legIndex: String(legIndexNum),
-                      passengerId,
-                      ...ratingMeta,
-                    }
-                  : { ...ratingMeta };
-              if (promptPassenger) {
+              const tripMeta = {
+                ...ratingMeta,
+                destinationDirection,
+                ...(destinationLat ? { destinationLat } : {}),
+                ...(destinationLng ? { destinationLng } : {}),
+                ...(destinationLabel ? { destinationLabel } : {}),
+                ...(passengerId ? { passengerId } : {}),
+                ...(autoJourneyId ? { journeyId: autoJourneyId, legIndex: String(autoLegIndex) } : {}),
+              };
+              // If driverId was not passed, the current user IS the driver (came from incoming-ride).
+              // Route them to rate-passenger. Otherwise this is the passenger — rate the driver.
+              const isDriverFlow = !driverId;
+              if (isDriverFlow) {
+                const effectivePassengerId = ridePassengerId ?? passengerId ?? "";
                 router.push({
                   pathname: "/rate-passenger",
-                  params: { rideId, passengerId: passengerId!, driverName, ...tripMeta },
+                  params: { rideId, passengerId: effectivePassengerId, ...ratingMeta },
                 });
               } else {
                 router.push({
                   pathname: "/post-trip-rating",
-                  params: { rideId, driverName, ...tripMeta },
+                  params: { rideId, driverName, driverId, ...tripMeta },
                 });
               }
             } catch (e) {
-              const message = e instanceof Error ? e.message : "Ride completion failed.";
+              const message = e instanceof Error ? e.message : t("rideCompletionFailed", "Ride completion failed.");
               Alert.alert(
-                "Could not complete ride",
-                message +
-                  "\n\nIf you see 401, sign in on the Points tab before testing."
+                t("couldNotCompleteRide"),
+                message + "\n\n" + t("signInOnPointsTab")
               );
             } finally {
               setIsCompletingRide(false);
@@ -455,16 +812,37 @@ export default function ActiveTripScreen() {
           style={styles.endTripButton}
         >
           <Text style={styles.endTripButtonText}>
-            {isCompletingRide ? "Completing..." : "End Trip"}
+            {isCompletingRide ? t("completing") : t("endTrip")}
           </Text>
         </Pressable>
+
+        <Pressable
+          onPress={shareTrip}
+          disabled={isSharing}
+          style={[styles.shareButton, isSharing && styles.shareButtonDisabled]}
+        >
+          <Text style={styles.shareButtonText}>{isSharing ? t("sharing") : t("shareTrip")}</Text>
+        </Pressable>
+        {shareError ? <Text style={styles.errorBannerBody}>{shareError}</Text> : null}
+        {shareUrl ? (
+          <View style={styles.shareLinkBlock}>
+            <Text style={styles.shareLinkLabel}>{t("shareToken")}</Text>
+            <Text style={styles.shareLinkValue} selectable>
+              {shareToken}
+            </Text>
+            <Text style={[styles.shareLinkLabel, { marginTop: 6 }]}>{t("deepLink")}</Text>
+            <Text style={styles.shareLinkValue} selectable>
+              {shareUrl}
+            </Text>
+          </View>
+        ) : null}
       </View>
 
       <Link href={backToSearchHref} style={styles.link}>
-        {journeyId ? "Change driver (back to search)" : "Back to Ride Request"}
+        {autoJourneyId ? t("chooseDifferentNextDriver") : t("goBackToRideRequest")}
       </Link>
       <Link href="/(tabs)" style={styles.linkSecondary}>
-        Go to Home
+        {t("goToHome")}
       </Link>
     </View>
   );
@@ -582,9 +960,17 @@ const styles = StyleSheet.create({
     color: "#0f766e",
   },
   repHint: {
-    marginTop: 8,
-    fontSize: 13,
+    marginTop: 7,
+    fontSize: 12,
     color: "#64748b",
+    lineHeight: 18,
+  },
+  destText: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "#334155",
+    fontWeight: "700",
+    lineHeight: 18,
   },
   statusText: {
     marginTop: 10,
@@ -593,60 +979,10 @@ const styles = StyleSheet.create({
     color: "#0f766e",
   },
   legDistanceLabel: {
-    marginTop: 12,
+    marginTop: 10,
     fontSize: 14,
     fontWeight: "600",
     color: "#334155",
-  },
-  gpsNote: {
-    marginTop: 8,
-    fontSize: 13,
-    color: "#475569",
-    lineHeight: 18,
-  },
-  gpsSpinner: {
-    marginTop: 8,
-  },
-  gpsButtonsRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginTop: 10,
-  },
-  gpsButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#93c5fd",
-    backgroundColor: "#eff6ff",
-    minWidth: "44%",
-    flexGrow: 1,
-  },
-  gpsButtonPrimary: {
-    backgroundColor: "#2563eb",
-    borderColor: "#2563eb",
-  },
-  gpsButtonDisabled: {
-    opacity: 0.55,
-  },
-  gpsButtonText: {
-    color: "#1d4ed8",
-    fontWeight: "700",
-    fontSize: 13,
-    textAlign: "center",
-  },
-  gpsButtonPrimaryText: {
-    color: "#ffffff",
-    fontWeight: "700",
-    fontSize: 13,
-    textAlign: "center",
-  },
-  gpsMeta: {
-    marginTop: 8,
-    fontSize: 12,
-    color: "#0f766e",
-    fontWeight: "600",
   },
   legMilesInput: {
     marginTop: 6,
@@ -682,12 +1018,47 @@ const styles = StyleSheet.create({
     backgroundColor: "#2563eb",
     borderRadius: 10,
     paddingVertical: 11,
+    minHeight: 44,
     alignItems: "center",
   },
   endTripButtonText: {
     color: "#ffffff",
     fontSize: 15,
     fontWeight: "700",
+  },
+  shareButton: {
+    marginTop: 10,
+    backgroundColor: "#10b981",
+    borderRadius: 10,
+    paddingVertical: 11,
+    minHeight: 44,
+    alignItems: "center",
+  },
+  shareButtonDisabled: {
+    opacity: 0.65,
+  },
+  shareButtonText: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  shareLinkBlock: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: "#dbe4f5",
+    borderRadius: 8,
+    padding: 10,
+    backgroundColor: "#f0fdfa",
+  },
+  shareLinkLabel: {
+    fontSize: 12,
+    color: "#0f766e",
+    fontWeight: "700",
+    marginBottom: 2,
+  },
+  shareLinkValue: {
+    fontSize: 12,
+    color: "#334155",
   },
   link: {
     marginTop: 12,
@@ -702,5 +1073,12 @@ const styles = StyleSheet.create({
     color: "#4b587c",
     fontSize: 15,
     fontWeight: "600",
+  },
+  errorBannerBody: {
+    marginTop: 12,
+    fontSize: 13,
+    color: "#dc2626",
+    textAlign: "center",
+    lineHeight: 18,
   },
 });

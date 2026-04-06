@@ -1,6 +1,7 @@
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Pressable,
   StyleSheet,
@@ -8,15 +9,18 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { useTranslation } from "react-i18next";
 
-import { getPassengersRateUrl } from "@/lib/backend-api-urls";
+import { getPassengersRateUrl, getRideStatusUrlOrNull } from "@/lib/backend-api-urls";
 import { formatBackendErrorBody } from "@/lib/backend-error";
+import { clearPendingPassengerRating, savePendingPassengerRating } from "@/lib/driver-pending-passenger-rating";
 import { supabase } from "@/lib/supabase";
 
 type Face = "smile" | "neutral" | "sad";
 
 export default function RatePassengerScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
   const params = useLocalSearchParams<{
     rideId?: string;
     passengerId?: string;
@@ -38,31 +42,75 @@ export default function RatePassengerScreen() {
   const driverName =
     typeof params.driverName === "string" && params.driverName.length > 0
       ? params.driverName
-      : "your driver";
+      : t("yourDriverFallback");
 
   const [face, setFace] = useState<Face | null>(null);
   const [comment, setComment] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [manualRideId, setManualRideId] = useState(rideId);
+  const [isLoadingRide, setIsLoadingRide] = useState(false);
 
-  const goToDriverRating = () => {
-    const meta: Record<string, string> = {};
-    if (typeof params.journeyId === "string" && params.journeyId.length > 0) {
-      meta.journeyId = params.journeyId;
+  const loadRideDetails = async () => {
+    if (!manualRideId.trim()) {
+      Alert.alert(t("enterRideIdAlertTitle"), t("enterRideIdAlertBody"));
+      return;
     }
-    if (typeof params.legIndex === "string" && params.legIndex.length > 0) {
-      meta.legIndex = params.legIndex;
+    setIsLoadingRide(true);
+    try {
+      const sessionResult = supabase ? await supabase.auth.getSession() : null;
+      const accessToken = sessionResult?.data.session?.access_token;
+      if (!accessToken) {
+        Alert.alert(t("signInRequiredTitle"), t("signInDriverLoadDetails"));
+        return;
+      }
+      const url = getRideStatusUrlOrNull(manualRideId.trim());
+      if (!url) {
+        Alert.alert(t("notConfiguredTitle"), t("cannotLoadRideDetails"));
+        return;
+      }
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!response.ok) {
+        const raw = await response.text().catch(() => "");
+        throw new Error(formatBackendErrorBody(raw, response.status));
+      }
+      const data = await response.json();
+      if (data.status !== "completed") {
+        Alert.alert(t("rideNotCompletedTitle"), t("rideNotCompletedBody"));
+        return;
+      }
+      if (!data.passenger_id) {
+        Alert.alert(t("noPassengerTitle"), t("noPassengerBody"));
+        return;
+      }
+      await savePendingPassengerRating({
+        rideId: manualRideId.trim(),
+        passengerId: String(data.passenger_id),
+      });
+      router.replace({
+        pathname: "/rate-passenger",
+        params: {
+          rideId: manualRideId.trim(),
+          passengerId: String(data.passenger_id),
+          driverName: driverName,
+          journeyId: params.journeyId,
+          legIndex: params.legIndex,
+          distanceMiles: params.distanceMiles,
+          wasZeroDetour: params.wasZeroDetour,
+        },
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : t("couldNotLoadRideDetails");
+      Alert.alert(t("loadFailedTitle"), message);
+    } finally {
+      setIsLoadingRide(false);
     }
-    if (typeof params.distanceMiles === "string" && params.distanceMiles.length > 0) {
-      meta.distanceMiles = params.distanceMiles;
-    }
-    if (typeof params.wasZeroDetour === "string" && params.wasZeroDetour.length > 0) {
-      meta.wasZeroDetour = params.wasZeroDetour;
-    }
-    if (passengerId) meta.passengerId = passengerId;
-    router.replace({
-      pathname: "/post-trip-rating",
-      params: { rideId, driverName, ...meta },
-    });
+  };
+
+  const exitToDriverHome = async () => {
+    await clearPendingPassengerRating();
+    router.replace("/(tabs)/driver");
   };
 
   const handleSubmit = async () => {
@@ -72,7 +120,7 @@ export default function RatePassengerScreen() {
       const sessionResult = supabase ? await supabase.auth.getSession() : null;
       const accessToken = sessionResult?.data.session?.access_token;
       if (!accessToken) {
-        Alert.alert("Sign in required", "Sign in as the driver before submitting.");
+        Alert.alert(t("signInRequiredTitle"), t("signInDriverSubmit"));
         return;
       }
       const endpoint = getPassengersRateUrl();
@@ -93,10 +141,10 @@ export default function RatePassengerScreen() {
         const raw = await response.text().catch(() => "");
         throw new Error(formatBackendErrorBody(raw, response.status));
       }
-      goToDriverRating();
+      await exitToDriverHome();
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Could not save rating.";
-      Alert.alert("Rating failed", message);
+      const message = e instanceof Error ? e.message : t("couldNotSaveRating");
+      Alert.alert(t("ratingFailedTitle"), message);
     } finally {
       setIsSubmitting(false);
     }
@@ -105,10 +153,31 @@ export default function RatePassengerScreen() {
   if (!rideId || !passengerId) {
     return (
       <View style={styles.screen}>
-        <Text style={styles.title}>Rate passenger</Text>
-        <Text style={styles.subtitle}>Missing trip details. Go back and end the trip again.</Text>
+        <Text style={styles.title}>{t("ratePassengerTitle")}</Text>
+        <Text style={styles.subtitle}>
+          {t("enterRideIdSubtitle")}
+        </Text>
+        <TextInput
+          placeholder={t("rideIdPlaceholder")}
+          value={manualRideId}
+          onChangeText={setManualRideId}
+          style={styles.input}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        <Pressable
+          onPress={loadRideDetails}
+          disabled={isLoadingRide}
+          style={[styles.submitButton, isLoadingRide && styles.submitDisabled]}
+        >
+          {isLoadingRide ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.submitText}>{t("loadRideButton")}</Text>
+          )}
+        </Pressable>
         <Link href="/(tabs)" style={styles.link}>
-          Home
+          {t("backToHome")}
         </Link>
       </View>
     );
@@ -116,9 +185,9 @@ export default function RatePassengerScreen() {
 
   return (
     <View style={styles.screen}>
-      <Text style={styles.title}>How was this passenger?</Text>
+      <Text style={styles.title}>{t("howWasPassengerTitle")}</Text>
       <Text style={styles.subtitle}>
-        We only ask on some trips (~1 in 5) to keep things light. Optional comment below.
+        {t("passengerFeedbackSubtitle")}
       </Text>
 
       <View style={styles.facesRow}>
@@ -127,26 +196,26 @@ export default function RatePassengerScreen() {
           style={[styles.faceButton, face === "smile" && styles.faceButtonActive]}
         >
           <Text style={styles.faceEmoji}>😊</Text>
-          <Text style={styles.faceLabel}>Great</Text>
+          <Text style={styles.faceLabel}>{t("ratingGreat")}</Text>
         </Pressable>
         <Pressable
           onPress={() => setFace("neutral")}
           style={[styles.faceButton, face === "neutral" && styles.faceButtonActive]}
         >
           <Text style={styles.faceEmoji}>😐</Text>
-          <Text style={styles.faceLabel}>Okay</Text>
+          <Text style={styles.faceLabel}>{t("ratingOkay")}</Text>
         </Pressable>
         <Pressable
           onPress={() => setFace("sad")}
           style={[styles.faceButton, face === "sad" && styles.faceButtonActive]}
         >
           <Text style={styles.faceEmoji}>😞</Text>
-          <Text style={styles.faceLabel}>Difficult</Text>
+          <Text style={styles.faceLabel}>{t("ratingDifficult")}</Text>
         </Pressable>
       </View>
 
       <TextInput
-        placeholder="Optional comment for internal use…"
+        placeholder={t("optionalCommentInternal")}
         value={comment}
         onChangeText={setComment}
         multiline
@@ -159,11 +228,11 @@ export default function RatePassengerScreen() {
         disabled={!face || isSubmitting}
         style={[styles.submitButton, (!face || isSubmitting) && styles.submitDisabled]}
       >
-        <Text style={styles.submitText}>{isSubmitting ? "Saving…" : "Submit"}</Text>
+        <Text style={styles.submitText}>{isSubmitting ? t("saving") : t("submit")}</Text>
       </Pressable>
 
-      <Pressable onPress={goToDriverRating} style={styles.skipPress}>
-        <Text style={styles.skipText}>Skip</Text>
+      <Pressable onPress={() => void exitToDriverHome()} style={styles.skipPress}>
+        <Text style={styles.skipText}>{t("skip")}</Text>
       </Pressable>
     </View>
   );

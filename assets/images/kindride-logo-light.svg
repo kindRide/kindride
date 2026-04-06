@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 220" fill="none">
+  <defs>
+
+    <linearGradient id="pinGradL" x1="15%" y1="0%" x2="85%" y2="100%">
+      <stop offset="0%"   stop-color="#0c1f3f"/>
+      <stop offset="52%"  stop-color="#0e4a6e"/>
+      <stop offset="100%" stop-color="#0d9488"/>
+    </linearGradient>
+
+    <linearGradient id="heartGradL" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#e0fdf8"/>
+    </linearGradient>
+
+    <linearGradient id="sparkL" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#5eead4"/>
+      <stop offset="100%" stop-color="#0d9488"/>
+    </linearGradient>
+
+    <linearGradient id="underlineL" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#0d9488" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#0d9488" stop-opacity="0"/>
+    </linearGradient>
+
+    <filter id="glowL" x="-40%" y="-30%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10"
+        flood-color="#0d9488" flood-opacity="0.22"/>
+    </filter>
+
+    <radialGradient id="sheenL" cx="35%" cy="18%" r="52%">
+      <stop offset="0%"   stop-color="#ffffff" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+
+  </defs>
+
+  <!-- ── ICON MARK (horizontal layout, left side) ── -->
+
+  <!-- Pin -->
+  <path
+    d="M100,8
+       C63,8  32,38  32,76
+       C32,114  100,178  100,178
+       C100,178  168,114  168,76
+       C168,38  137,8  100,8 Z"
+    fill="url(#pinGradL)"
+    filter="url(#glowL)"
+  />
+
+  <!-- Sheen -->
+  <path
+    d="M100,8 C63,8 32,38 32,76 C32,81 33,86 34,91
+       C50,44 74,20 100,16 C126,20 150,44 166,91
+       C167,86 168,81 168,76 C168,38 137,8 100,8 Z"
+    fill="url(#sheenL)"
+  />
+
+  <!-- Heart inside pin -->
+  <path
+    d="M100,128
+       C84,119  56,105  56,80
+       C56,60  70,51  84,51
+       C92,51  98,56  100,63
+       C102,56  108,51  116,51
+       C130,51  144,60  144,80
+       C144,105  116,119  100,128 Z"
+    fill="url(#heartGradL)"
+  />
+
+  <!-- Spark -->
+  <circle cx="100" cy="126" r="4.5" fill="url(#sparkL)" opacity="0.92"/>
+  <circle cx="100" cy="126" r="2"   fill="#ffffff"       opacity="0.80"/>
+
+  <!-- ── WORDMARK (right side) ── -->
+
+  <!-- "Kind" -->
+  <text
+    x="192" y="108"
+    font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif"
+    font-size="76"
+    font-weight="800"
+    fill="#0c1f3f"
+    letter-spacing="-2.5"
+  >Kind</text>
+
+  <!-- "Ride" -->
+  <text
+    x="453" y="108"
+    font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif"
+    font-size="76"
+    font-weight="300"
+    fill="#0d9488"
+    letter-spacing="-1"
+  >Ride</text>
+
+  <!-- Underline accent -->
+  <rect x="192" y="118" width="350" height="2.5" rx="1.25" fill="url(#underlineL)"/>
+
+  <!-- Tagline -->
+  <text
+    x="192" y="150"
+    font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif"
+    font-size="14"
+    font-weight="500"
+    fill="#94a3b8"
+    letter-spacing="4"
+  >HUMANITARIAN · COMMUNITY · CARE</text>
+
+</svg>

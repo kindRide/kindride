@@ -57,9 +57,18 @@ export function getMatchingDemoDriversUrl(): string {
   return `${getBackendBaseUrl()}/matching/demo-drivers`;
 }
 
+export function getMatchingSearchUrl(): string {
+  return `${getBackendBaseUrl()}/matching/search`;
+}
+
 export function getMatchingDemoDriversUrlOrNull(): string | null {
   const b = getBackendBaseUrlOrNull();
   return b ? `${b}/matching/demo-drivers` : null;
+}
+
+export function getMatchingSearchUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/matching/search` : null;
 }
 
 export function getJourneysRegisterUrl(): string {
@@ -78,4 +87,60 @@ export function getJourneysCompleteUrl(): string {
 export function getJourneysCompleteUrlOrNull(): string | null {
   const b = getBackendBaseUrlOrNull();
   return b ? `${b}/journeys/complete` : null;
+}
+
+export function getRidesStartSearchUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/rides/start-search` : null;
+}
+
+export function getRidesRequestDriverUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/rides/request-driver` : null;
+}
+
+export function getRidesCancelPendingUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/rides/cancel-pending` : null;
+}
+
+export function getRidesRespondUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/rides/respond` : null;
+}
+
+export function getRideStatusUrlOrNull(rideId: string): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/rides/status/${encodeURIComponent(rideId)}` : null;
+}
+
+/** Poll for rides where the signed-in user is the pending driver (production-style; no ride id typing). */
+export function getRidesIncomingForDriverUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/rides/incoming-for-driver` : null;
+}
+
+export function getRidesShareTokenUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/rides/share-token` : null;
+}
+
+export function getRideShareStatusUrlOrNull(shareToken: string): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/rides/share/${encodeURIComponent(shareToken)}` : null;
+}
+
+export function getTipsCreateUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/tips/create` : null;
+}
+
+export function getConnectStatusUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/connect/status` : null;
+}
+
+export function getConnectOnboardUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/connect/onboard` : null;
 }

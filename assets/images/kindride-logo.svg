@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 600" fill="none">
+  <defs>
+
+    <!-- Pin gradient: deep navy → mid teal-blue → vivid teal -->
+    <linearGradient id="pinGrad" x1="15%" y1="0%" x2="85%" y2="100%">
+      <stop offset="0%"   stop-color="#0c1f3f"/>
+      <stop offset="52%"  stop-color="#0e4a6e"/>
+      <stop offset="100%" stop-color="#0d9488"/>
+    </linearGradient>
+
+    <!-- Heart gradient: pure white → faint teal blush -->
+    <linearGradient id="heartGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#e0fdf8"/>
+    </linearGradient>
+
+    <!-- Accent ring gradient -->
+    <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#5eead4"/>
+      <stop offset="100%" stop-color="#0d9488"/>
+    </linearGradient>
+
+    <!-- Teal glow drop shadow -->
+    <filter id="glow" x="-28%" y="-12%" width="156%" height="148%">
+      <feDropShadow dx="0" dy="14" stdDeviation="22"
+        flood-color="#0d9488" flood-opacity="0.30"/>
+      <feDropShadow dx="0" dy="4"  stdDeviation="6"
+        flood-color="#0c1f3f" flood-opacity="0.20"/>
+    </filter>
+
+    <!-- Subtle inner-top specular sheen -->
+    <radialGradient id="sheen" cx="38%" cy="22%" r="52%">
+      <stop offset="0%"   stop-color="#ffffff" stop-opacity="0.13"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+
+  </defs>
+
+  <!-- ══════════════════════════════════════════
+       ICON MARK
+  ══════════════════════════════════════════ -->
+
+  <!-- Pin body — location pin silhouette -->
+  <path
+    d="M280,22
+       C181,22  98,102  98,200
+       C98,298  280,450  280,450
+       C280,450  462,298  462,200
+       C462,102  379,22  280,22 Z"
+    fill="url(#pinGrad)"
+    filter="url(#glow)"
+  />
+
+  <!-- Glass sheen — top-left specular -->
+  <path
+    d="M280,22
+       C181,22  98,102  98,200
+       C98,212  100,224  103,235
+       C138,128  204,70  280,58
+       C356,70  422,128  457,235
+       C460,224  462,212  462,200
+       C462,102  379,22  280,22 Z"
+    fill="url(#sheen)"
+  />
+
+  <!-- Depth shadow inside lower pin tip -->
+  <path
+    d="M280,450
+       C280,450  180,322  130,252
+       C155,312  195,372  240,414
+       C256,430  269,442  280,450 Z"
+    fill="rgba(0,0,0,0.09)"
+  />
+
+  <!-- ── HEART ── -->
+  <!-- Classic two-lobe heart centred at (280, 220), width ≈ 210, height ≈ 180 -->
+  <path
+    d="M280,330
+       C250,313  168,278  168,216
+       C168,170  198,146  232,146
+       C255,146  271,158  280,174
+       C289,158  305,146  328,146
+       C362,146  392,170  392,216
+       C392,278  310,313  280,330 Z"
+    fill="url(#heartGrad)"
+  />
+
+  <!-- Signature spark — teal accent dot at the bottom point of the heart -->
+  <circle cx="280" cy="326" r="8.5" fill="url(#ringGrad)" opacity="0.92"/>
+  <!-- Inner white dot for a jewel-like finish -->
+  <circle cx="280" cy="326" r="3.5" fill="#ffffff" opacity="0.80"/>
+
+
+  <!-- ══════════════════════════════════════════
+       WORDMARK
+  ══════════════════════════════════════════ -->
+
+  <!-- "Kind"  — 800 weight, deep navy -->
+  <text
+    x="80" y="520"
+    font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif"
+    font-size="86"
+    font-weight="800"
+    fill="#0c1f3f"
+    letter-spacing="-3"
+  >Kind</text>
+
+  <!-- "Ride"  — 300 weight, KindRide teal -->
+  <text
+    x="285" y="520"
+    font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif"
+    font-size="86"
+    font-weight="300"
+    fill="#0d9488"
+    letter-spacing="-1"
+  >Ride</text>
+
+  <!-- Wordmark underline accent — teal to transparent -->
+  <defs>
+    <linearGradient id="lineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#0d9488" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#0d9488" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="80" y="530" width="390" height="3" rx="1.5" fill="url(#lineGrad)"/>
+
+  <!-- Tagline -->
+  <text
+    x="80" y="566"
+    font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif"
+    font-size="17"
+    font-weight="500"
+    fill="#94a3b8"
+    letter-spacing="4.5"
+  >HUMANITARIAN · COMMUNITY · CARE</text>
+
+</svg>

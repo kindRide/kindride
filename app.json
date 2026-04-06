@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "KindRide is running on your phone",
-    "slug": "KindRide",
+    "name": "KindRide",
+    "slug": "kindride",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -9,7 +9,9 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.kindride.app",
+      "config": {}
     },
     "android": {
       "adaptiveIcon": {
@@ -19,19 +21,54 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyDGvt5z0275kPFCY0b0ftidEQaI5rS8Ba0"
+        }
+      },
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.kindride.app",
+      "compileSdkVersion": 35,
+      "targetSdkVersion": 35,
+      "minSdkVersion": 24
     },
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {}
+        }
+      ],
       "expo-router",
       [
         "expo-location",
         {
           "locationWhenInUsePermission": "KindRide uses your location to estimate this leg’s distance (straight-line GPS). You can still type miles manually.",
           "locationAlwaysAndWhenInUsePermission": "KindRide uses your location to estimate this leg’s distance (straight-line GPS). You can still type miles manually."
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "KindRide records audio during active trips to protect passengers and drivers. Recordings are stored securely and auto-deleted after 72 hours unless flagged."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "KindRide uses the camera to scan ride QR codes and to record safety sessions during active trips (recordings are auto-deleted after 72 hours unless flagged).",
+          "microphonePermission": "KindRide records audio during active trips to protect passengers and drivers. Recordings are stored securely and auto-deleted after 72 hours unless flagged.",
+          "recordAudioAndroid": true
         }
       ],
       [
@@ -50,6 +87,18 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "699ae9e1-8a99-48ab-a2b6-3666c84162b8"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/699ae9e1-8a99-48ab-a2b6-3666c84162b8"
     }
   }
 }
