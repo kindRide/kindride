@@ -66,6 +66,31 @@ This document records every non-trivial UX/technical innovation introduced beyon
 **What:** "Sign Out" and "Delete Account" rows are visually separated at the bottom in red, with icon badges on red backgrounds. Both trigger Alert confirmation dialogs before executing.  
 **Why:** Destructive actions must be hard to trigger accidentally and easy to understand. Placing them last and requiring confirmation reduces accidental sign-outs and support requests.
 
+### 13. Power Button Online Toggle (Driver Screen)
+**File:** `app/(tabs)/driver.tsx` → `PowerButton` component  
+**What:** The driver's online/offline toggle is a large circular power button (120px) — not a switch row. It has a triple-layer animation: outer pulse ring (expands + fades on repeat when online), glow ring (fades in/out on state change), and a spring scale bounce on press. Color transitions between green (online) and muted white (offline). Haptic Heavy on every press.  
+**Why:** The most critical action for a driver is going online. It should feel like a physical, deliberate act — not flipping a switch. The power button metaphor is universally understood and the animation makes state changes unmissable.
+
+### 14. Horizontal Earnings Summary Strip (Driver Screen)
+**File:** `app/(tabs)/driver.tsx` → `EarningsStrip` component  
+**What:** Three earnings cells (Today / This week / This month) in a horizontally scrollable white card directly below the hero. Large number + "pts" unit + label. Separated by hairline dividers.  
+**Why:** Drivers need a quick earnings pulse without navigating to the Points tab. Placing it immediately below the hero keeps it visible on every session without cluttering the ride request flow.
+
+### 15. Vibe Preference Badges on Ride Request Cards (Driver Screen)
+**File:** `app/(tabs)/driver.tsx` → `VibeBadge` component  
+**What:** Each incoming ride card shows a colored pill badge for the passenger's requested vibe: 🤫 Silent ride (indigo), 💬 Let's chat (sky blue), 🎵 Music on (fuchsia). Greyed out when no vibe set.  
+**Why:** Drivers should know what kind of ride they're accepting before tapping Accept. A silent-preferring driver accepting a chatty passenger is a friction point. Surfacing vibe before acceptance improves match quality and reduces post-trip complaints.
+
+### 16. Community Rides Counter in Driver Hero
+**File:** `app/(tabs)/driver.tsx` hero section  
+**What:** A live ticker in the driver hero shows "X rides given in your city today" — increments by 0–1 every 8 seconds to create a sense of a living, active network. Styled with a green dot ● for "live" signal.  
+**Why:** Drivers who are offline need a motivation nudge. Seeing their city's ride activity in real time creates FOMO and community belonging — both powerful motivators to go online.
+
+### 17. Kind Points Badge on Ride Request Cards (Driver Screen)
+**File:** `app/(tabs)/driver.tsx` ride cards  
+**What:** Each ride card shows a "+15 pts" green badge next to the passenger name row, displaying estimated kind points for accepting the ride.  
+**Why:** Points are the driver's currency. Showing the reward before they accept (not after) makes accepting feel immediately rewarding and frames the decision positively.
+
 ---
 
 ## Technical Innovations
@@ -116,4 +141,4 @@ This document records every non-trivial UX/technical innovation introduced beyon
 
 ---
 
-*Last updated: 2026-04-07 — Session 43*
+*Last updated: 2026-04-07 — Session 45*

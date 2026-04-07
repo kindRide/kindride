@@ -1,15 +1,17 @@
 import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
+import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Alert,
   Animated,
+  Dimensions,
   Linking,
   Platform,
   Pressable,
-  RefreshControl,
+t hit  RefreshControl,
   ScrollView,
   StyleSheet,
   Switch,
@@ -17,13 +19,33 @@ import {
   TextInput,
   View,
 } from "react-native";
+import Reanimated, {
+  FadeInDown,
+  FadeInRight,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Location from "expo-location";
 import { Audio } from "expo-av";
 
-import { getConnectOnboardUrlOrNull, getConnectStatusUrlOrNull, getRidesIncomingForDriverUrlOrNull, getRidesRespondUrlOrNull, getRideStatusUrlOrNull } from "@/lib/backend-api-urls";
+import {
+  getConnectOnboardUrlOrNull,
+  getConnectStatusUrlOrNull,
+  getRidesIncomingForDriverUrlOrNull,
+  getRidesRespondUrlOrNull,
+  getRideStatusUrlOrNull,
+} from "@/lib/backend-api-urls";
 import { savePendingPassengerRating } from "@/lib/driver-pending-passenger-rating";
 import { supabase } from "@/lib/supabase";
+
+const SCREEN_W = Dimensions.get("window").width;
+
+type VibeMode = "silent" | "chat" | "music";
 
 type IncomingRide = {
   ride_id: string;
@@ -31,13 +53,217 @@ type IncomingRide = {
   pickup_label?: string | null;
   passenger_name?: string | null;
   request_expires_at?: string | null;
+  vibe?: VibeMode | null;
+  distance_km?: number | null;
+  kind_points?: number | null;
 };
 
+// ── Vibe badge ────────────────────────────────────────────────────────────────
+const VIBE_META: Record<VibeMode, { icon: string; label: string; color: string; bg: string }> = {
+  silent: { icon: "🤫", label: "Silent ride", color: "#6366f1", bg: "#eef2ff" },
+  chat:   { icon: "💬", label: "Let's chat",  color: "#0ea5e9", bg: "#e0f2fe" },
+  music:  { icon: "🎵", label: "Music on",    color: "#d946ef", bg: "#fdf4ff" },
+};
+
+function VibeBadge({ vibe }: { vibe: VibeMode }) {
+  const meta = VIBE_META[vibe];
+  return (
+    <View style={[vibeBadgeStyles.pill, { backgroundColor: meta.bg }]}>
+      <Text style={vibeBadgeStyles.icon}>{meta.icon}</Text>
+      <Text style={[vibeBadgeStyles.label, { color: meta.color }]}>{meta.label}</Text>
+    </View>
+  );
+}
+const vibeBadgeStyles = StyleSheet.create({
+  pill: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
+  icon: { fontSize: 12 },
+  label: { fontSize: 12, fontWeight: "700" },
+});
+
+// ── Power button ──────────────────────────────────────────────────────────────
+function PowerButton({
+  isOn,
+  syncing,
+  onPress,
+  t,
+}: {
+  isOn: boolean;
+  syncing: boolean;
+  onPress: () => void;
+  t: any;
+}) {
+  const scale = useSharedValue(1);
+  const ringOpacity = useSharedValue(isOn ? 1 : 0);
+  const ringScale = useSharedValue(isOn ? 1 : 0.85);
+
+  useEffect(() => {
+    ringOpacity.value = withTiming(isOn ? 1 : 0, { duration: 400 });
+    ringScale.value = withSpring(isOn ? 1 : 0.85);
+  }, [isOn]);
+
+  // Pulse ring when online
+  const pulseOpacity = useSharedValue(0);
+  const pulseScale = useSharedValue(1);
+  useEffect(() => {
+    if (isOn) {
+      pulseOpacity.value = withRepeat(
+        withSequence(withTiming(0.5, { duration: 900 }), withTiming(0, { duration: 900 })),
+        -1
+      );
+      pulseScale.value = withRepeat(
+        withSequence(withTiming(1.45, { duration: 900 }), withTiming(1, { duration: 900 })),
+        -1
+      );
+    } else {
+      pulseOpacity.value = withTiming(0);
+      pulseScale.value = withTiming(1);
+    }
+  }, [isOn]);
+
+  const pulseStyle = useAnimatedStyle(() => ({
+    opacity: pulseOpacity.value,
+    transform: [{ scale: pulseScale.value }],
+  }));
+  const ringStyle = useAnimatedStyle(() => ({
+    opacity: ringOpacity.value,
+    transform: [{ scale: ringScale.value }],
+  }));
+  const btnStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  const handlePress = () => {
+    if (syncing) return;
+    scale.value = withSequence(withSpring(0.91), withSpring(1));
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    onPress();
+  };
+
+  return (
+    <View style={powerStyles.wrap}>
+      {/* Pulse ring */}
+      <Reanimated.View
+        style={[
+          powerStyles.pulseRing,
+          { borderColor: isOn ? "#4ade80" : "transparent" },
+          pulseStyle,
+        ]}
+      />
+      {/* Glow ring */}
+      <Reanimated.View
+        style={[
+          powerStyles.glowRing,
+          { borderColor: isOn ? "rgba(74,222,128,0.4)" : "rgba(255,255,255,0.12)" },
+          ringStyle,
+        ]}
+      />
+      <Reanimated.View style={btnStyle}>
+        <Pressable
+          onPress={handlePress}
+          style={[
+            powerStyles.btn,
+            {
+              backgroundColor: isOn
+                ? "rgba(74,222,128,0.18)"
+                : "rgba(255,255,255,0.08)",
+              borderColor: isOn ? "#4ade80" : "rgba(255,255,255,0.25)",
+            },
+          ]}
+        >
+          <LinearGradient
+            colors={
+              isOn
+                ? ["rgba(74,222,128,0.3)", "rgba(13,148,136,0.2)"]
+                : ["rgba(255,255,255,0.06)", "rgba(255,255,255,0.02)"]
+            }
+            style={powerStyles.btnInner}
+          >
+            <Text style={powerStyles.icon}>⏻</Text>
+            <Text
+              style={[
+                powerStyles.label,
+                { color: isOn ? "#4ade80" : "rgba(255,255,255,0.5)" },
+              ]}
+            >
+            {syncing ? t("syncing", "Syncing…") : isOn ? t("online", "Online") : t("offline", "Offline")}
+            </Text>
+          </LinearGradient>
+        </Pressable>
+      </Reanimated.View>
+    </View>
+  );
+}
+const powerStyles = StyleSheet.create({
+  wrap: { alignItems: "center", justifyContent: "center", width: 160, height: 160 },
+  pulseRing: {
+    position: "absolute",
+    width: 160, height: 160,
+    borderRadius: 80, borderWidth: 2,
+  },
+  glowRing: {
+    position: "absolute",
+    width: 140, height: 140,
+    borderRadius: 70, borderWidth: 2,
+  },
+  btn: {
+    width: 120, height: 120,
+    borderRadius: 60, borderWidth: 2, overflow: "hidden",
+  },
+  btnInner: {
+    flex: 1, alignItems: "center", justifyContent: "center", gap: 4,
+  },
+  icon: { fontSize: 30 },
+  label: { fontSize: 13, fontWeight: "800", letterSpacing: 0.5 },
+});
+
+// ── Earnings card ─────────────────────────────────────────────────────────────
+function EarningsStrip({ rides, t }: { rides: number; t: any }) {
+  const today = rides * 15;
+  const week = today + 48 * 15; // mock weekly
+  const month = week + 180 * 15;
+  const cells = [
+    { label: t("today", "Today"), value: today, unit: t("pts", "pts") },
+    { label: t("thisWeek", "This week"), value: week, unit: t("pts", "pts") },
+    { label: t("thisMonth", "This month"), value: month, unit: t("pts", "pts") },
+  ];
+  return (
+    <Reanimated.View entering={FadeInDown.delay(100).springify()} style={earningStyles.strip}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={earningStyles.scroll}>
+        {cells.map((c, i) => (
+          <View key={c.label} style={[earningStyles.cell, i < cells.length - 1 && earningStyles.cellBorder]}>
+            <Text style={earningStyles.cellValue}>{c.value.toLocaleString()}</Text>
+            <Text style={earningStyles.cellUnit}>{c.unit}</Text>
+            <Text style={earningStyles.cellLabel}>{c.label}</Text>
+          </View>
+        ))}
+      </ScrollView>
+    </Reanimated.View>
+  );
+}
+const earningStyles = StyleSheet.create({
+  strip: {
+    marginHorizontal: 16, marginBottom: 4,
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    ...Platform.select({
+      ios: { shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 8 },
+      android: { elevation: 3 },
+    }),
+  },
+  scroll: { paddingHorizontal: 4 },
+  cell: { paddingVertical: 16, paddingHorizontal: 24, alignItems: "center", gap: 2 },
+  cellBorder: { borderRightWidth: 1, borderRightColor: "#f1f5f9" },
+  cellValue: { fontSize: 24, fontWeight: "800", color: "#0f172a", letterSpacing: -0.5 },
+  cellUnit: { fontSize: 11, fontWeight: "700", color: "#0d9488", letterSpacing: 0.5, textTransform: "uppercase" },
+  cellLabel: { fontSize: 12, color: "#94a3b8", fontWeight: "500" },
+});
+
+// ── Main screen ───────────────────────────────────────────────────────────────
 export default function DriverDashboardScreen() {
+  "use no memo";
   const { t } = useTranslation();
   const router = useRouter();
 
-  // ── State ────────────────────────────────────────────────────────────────────
   const [session, setSession] = useState<any>(null);
   const [isAvailable, setIsAvailable] = useState(false);
   const [intent, setIntent] = useState<"already_going" | "detour">("already_going");
@@ -58,12 +284,13 @@ export default function DriverDashboardScreen() {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [ridesGiven, setRidesGiven] = useState(0);
   const [prefsOpen, setPrefsOpen] = useState(false);
+  const [communityCount, setCommunityCount] = useState(4380);
 
   const soundRef = useRef<Audio.Sound | null>(null);
   const knownRideIdsRef = useRef<Set<string>>(new Set());
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [fadeAnim] = useState(() => new Animated.Value(0));
 
-  // ── Audio setup ──────────────────────────────────────────────────────────────
+  // ── Audio setup
   useEffect(() => {
     Audio.setAudioModeAsync({
       playsInSilentModeIOS: true,
@@ -74,14 +301,22 @@ export default function DriverDashboardScreen() {
     return () => { soundRef.current?.unloadAsync().catch(() => {}); };
   }, []);
 
-  // ── Countdown tick ───────────────────────────────────────────────────────────
+  // ── Community counter fluctuation
+  useEffect(() => {
+    const tick = setInterval(() => {
+      setCommunityCount((n) => n + Math.floor(Math.random() * 2));
+    }, 8000);
+    return () => clearInterval(tick);
+  }, []);
+
+  // ── Countdown tick
   useEffect(() => {
     if (incomingRides.length === 0) return;
     const tick = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(tick);
   }, [incomingRides.length]);
 
-  // ── Accept / Decline ─────────────────────────────────────────────────────────
+  // ── Accept / Decline
   const respondInline = useCallback(async (rideId: string, accept: boolean) => {
     const endpoint = getRidesRespondUrlOrNull();
     if (!endpoint || !supabase) return;
@@ -89,6 +324,7 @@ export default function DriverDashboardScreen() {
     const token = data.session?.access_token;
     if (!token) return;
     setActingRideId(rideId);
+    Haptics.impactAsync(accept ? Haptics.ImpactFeedbackStyle.Medium : Haptics.ImpactFeedbackStyle.Light);
     try {
       const r = await fetch(endpoint, {
         method: "POST",
@@ -129,7 +365,7 @@ export default function DriverDashboardScreen() {
     }
   }, [router, t]);
 
-  // ── Auth listener ────────────────────────────────────────────────────────────
+  // ── Auth listener
   useEffect(() => {
     if (!supabase) return;
     supabase.auth.getSession().then(({ data }) => {
@@ -151,7 +387,7 @@ export default function DriverDashboardScreen() {
     return () => authListener.subscription.unsubscribe();
   }, []);
 
-  // ── Presence sync ─────────────────────────────────────────────────────────────
+  // ── Presence sync
   const syncPresence = useCallback(
     async (available: boolean, overrideHeading?: string, overrideIntent?: string) => {
       if (!supabase || !session?.user?.id) return;
@@ -190,15 +426,13 @@ export default function DriverDashboardScreen() {
     [session, heading, intent, displayName, t]
   );
 
-  // ── Incoming rides poll ───────────────────────────────────────────────────────
+  // ── Incoming rides poll
   const loadIncoming = useCallback(async () => {
     if (!session?.access_token) return;
     const url = getRidesIncomingForDriverUrlOrNull();
     if (!url) return;
     try {
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` } });
       if (res.ok) {
         const data = await res.json();
         const rides: IncomingRide[] = data.rides || [];
@@ -217,7 +451,7 @@ export default function DriverDashboardScreen() {
               soundRef.current = sound;
             }
           } catch {
-            // Audio not available — ignore
+            // Audio not available
           }
         }
         knownRideIdsRef.current = new Set(rides.map((r) => r.ride_id));
@@ -239,7 +473,7 @@ export default function DriverDashboardScreen() {
     return () => clearInterval(heartbeat);
   }, [isAvailable, session, syncPresence]);
 
-  // ── Status / hub / connect ────────────────────────────────────────────────────
+  // ── Status / hub / connect
   useEffect(() => {
     if (!session?.access_token) return;
     const base = process.env.EXPO_PUBLIC_POINTS_API_URL?.replace("/points/award", "") ?? "";
@@ -275,7 +509,7 @@ export default function DriverDashboardScreen() {
     setRefreshing(false);
   };
 
-  // ── Not signed in ─────────────────────────────────────────────────────────────
+  // ── Not signed in
   if (!session) {
     return (
       <SafeAreaView style={styles.root} edges={["top"]}>
@@ -286,7 +520,7 @@ export default function DriverDashboardScreen() {
           <Text style={styles.signInTitle}>{t("driverMode")}</Text>
           <Text style={styles.signInBody}>{t("driverSignInPrompt")}</Text>
           <Pressable style={styles.signInBtn} onPress={() => router.push("/sign-in")}>
-            <Text style={styles.signInBtnText}>Sign in to continue  →</Text>
+            <Text style={styles.signInBtnText}>{t("signInToContinue", "Sign in to continue")}  →</Text>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -295,89 +529,80 @@ export default function DriverDashboardScreen() {
 
   const firstName = displayName.split(" ")[0];
   const hour = new Date().getHours();
-  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  const greeting = hour < 12 ? t("goodMorning", "Good morning") : hour < 17 ? t("goodAfternoon", "Good afternoon") : t("goodEvening", "Good evening");
 
-  // ── Main dashboard ────────────────────────────────────────────────────────────
+  // ── Main dashboard
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
       <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: 48 }}
+          contentContainerStyle={{ paddingBottom: 56 }}
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#0d9488" />}
         >
 
           {/* ── Hero ──────────────────────────────────────────────────────────── */}
-          <View style={styles.heroWrap}>
-            <LinearGradient
-              colors={["#0c1f3f", "#0e4a6e", "#0a5c54"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.heroGradient}
-            >
-              {/* Logo + status row */}
-              <View style={styles.heroTopRow}>
-                <View style={styles.logoRow}>
-                  <Text style={styles.logoKind}>Kind</Text>
-                  <Text style={styles.logoRide}>Ride</Text>
-                </View>
-                <View style={[styles.statusPill, isAvailable ? styles.statusPillOn : styles.statusPillOff]}>
-                  <View style={[styles.statusDot, isAvailable ? styles.statusDotOn : styles.statusDotOff]} />
-                  <Text style={[styles.statusPillText, isAvailable ? styles.statusTextOn : styles.statusTextOff]}>
-                    {isAvailable ? "Online" : "Offline"}
-                  </Text>
+          <LinearGradient
+            colors={["#0c1f3f", "#0e4a6e", "#0a5c54"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.hero}
+          >
+            {/* Top row: logo + status pill */}
+            <View style={styles.heroTopRow}>
+              <View style={styles.logoRow}>
+                <Text style={styles.logoKind}>Kind</Text>
+                <Text style={styles.logoRide}>Ride</Text>
+                <View style={styles.driverBadge}>
+                  <Text style={styles.driverBadgeText}>DRIVER</Text>
                 </View>
               </View>
+              {idVerified && (
+                <View style={styles.verifiedPill}>
+                  <Text style={styles.verifiedText}>✓ Verified</Text>
+                </View>
+              )}
+            </View>
 
-              {/* Greeting */}
-              <Text style={styles.heroEyebrow}>{greeting}</Text>
-              <Text style={styles.heroHeadline}>{firstName}</Text>
+            {/* Greeting */}
+            <Text style={styles.heroEyebrow}>{greeting},</Text>
+            <Text style={styles.heroHeadline}>{firstName}</Text>
 
-              {/* Stats row */}
-              <View style={styles.statsRow}>
-                <View style={styles.statCell}>
-                  <Text style={styles.statNumber}>{ridesGiven}</Text>
-                  <Text style={styles.statLabel}>Rides today</Text>
-                </View>
-                <View style={styles.statDivider} />
-                <View style={styles.statCell}>
-                  <Text style={styles.statNumber}>{ridesGiven * 15}</Text>
-                  <Text style={styles.statLabel}>Points earned</Text>
-                </View>
-                <View style={styles.statDivider} />
-                <View style={styles.statCell}>
-                  <Text style={styles.statNumber}>{idVerified ? "✓" : "—"}</Text>
-                  <Text style={styles.statLabel}>Verified</Text>
-                </View>
-              </View>
+            {/* Community counter */}
+            <View style={styles.communityBadge}>
+              <Text style={styles.communityDot}>●</Text>
+              <Text style={styles.communityText}>{communityCount.toLocaleString()} {t("ridesGivenInCity", "rides given in your city today")}</Text>
+            </View>
 
-              {/* Online toggle */}
-              <Pressable
-                style={[styles.toggleRow, isAvailable && styles.toggleRowOn]}
-                onPress={() => { if (!syncing) syncPresence(!isAvailable); }}
-                disabled={syncing}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.toggleLabel}>
-                    {syncing ? "Syncing location…" : isAvailable ? "You're online — accepting rides" : "Go online to receive requests"}
-                  </Text>
-                  {lastSync && !syncing && (
-                    <Text style={styles.toggleSub}>
-                      Synced {lastSync.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    </Text>
-                  )}
-                </View>
-                <Switch
-                  value={isAvailable}
-                  onValueChange={(val) => syncPresence(val)}
-                  disabled={syncing}
-                  trackColor={{ false: "rgba(255,255,255,0.2)", true: "#0d9488" }}
-                  thumbColor="#ffffff"
-                />
-              </Pressable>
-            </LinearGradient>
+            {/* Power button */}
+            <View style={styles.powerWrap}>
+              <PowerButton
+                isOn={isAvailable}
+                syncing={syncing}
+                onPress={() => syncPresence(!isAvailable)}
+                t={t}
+              />
+              <Text style={styles.powerHint}>
+                {syncing
+                  ? t("syncingLocation", "Syncing your location…")
+                  : isAvailable
+                  ? t("liveWaitingRequests", "You're live — waiting for requests")
+                  : t("tapToGoOnline", "Tap to go online")}
+              </Text>
+              {lastSync && !syncing && (
+                <Text style={styles.powerSync}>
+                  {t("lastSynced", "Last synced")} {lastSync.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </Text>
+              )}
+            </View>
+          </LinearGradient>
+
+          {/* ── Earnings strip ────────────────────────────────────────────────── */}
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>{t("earnings", "Earnings")}</Text>
           </View>
+          <EarningsStrip rides={ridesGiven} t={t} />
 
           {/* ── Incoming Requests ─────────────────────────────────────────────── */}
           <View style={styles.sectionHeader}>
@@ -390,123 +615,146 @@ export default function DriverDashboardScreen() {
           </View>
 
           {incomingRides.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyIcon}>🕐</Text>
+            <Reanimated.View entering={FadeInDown.delay(200).springify()} style={styles.emptyCard}>
+              <Text style={styles.emptyIcon}>{isAvailable ? "🕐" : "💤"}</Text>
               <Text style={styles.emptyTitle}>
-                {isAvailable ? "Waiting for requests…" : "You're offline"}
+                {isAvailable ? t("waitingForRequests", "Waiting for requests…") : t("youAreOffline", "You're offline")}
               </Text>
               <Text style={styles.emptyBody}>
                 {isAvailable
-                  ? "Sit tight — new ride requests appear here automatically."
-                  : "Toggle online above to start receiving ride requests from nearby passengers."}
+                  ? t("sitTight", "Sit tight — new ride requests appear here automatically every 4 seconds.")
+                  : t("tapPowerButton", "Tap the power button above to start receiving nearby ride requests.")}
               </Text>
-            </View>
+            </Reanimated.View>
           ) : (
             <View style={styles.rideList}>
-              {incomingRides.map((r) => {
+              {incomingRides.map((r, idx) => {
                 const expiresAt = r.request_expires_at ? new Date(r.request_expires_at).getTime() : null;
                 const secsLeft = expiresAt ? Math.max(0, Math.round((expiresAt - nowMs) / 1000)) : null;
                 const isUrgent = secsLeft !== null && secsLeft <= 20;
                 const isActing = actingRideId === r.ride_id;
+                const pts = r.kind_points ?? 15;
+                const dist = r.distance_km != null ? `${r.distance_km.toFixed(1)} km` : null;
+                const vibe: VibeMode | null = (r.vibe as VibeMode) ?? null;
+
                 return (
-                  <View key={r.ride_id} style={[styles.rideCard, isUrgent && styles.rideCardUrgent]}>
-                    {/* Card header */}
-                    <View style={styles.rideCardTop}>
-                      <View style={styles.rideNewBadge}>
-                        <Text style={styles.rideNewText}>{t("driverNewRideRequest", "New Request")}</Text>
+                  <Reanimated.View
+                    key={r.ride_id}
+                    entering={FadeInRight.delay(idx * 80).springify()}
+                  >
+                    <View style={[styles.rideCard, isUrgent && styles.rideCardUrgent]}>
+                      {/* Card header */}
+                      <View style={styles.rideCardTop}>
+                        <View style={styles.rideNewBadge}>
+                          <Text style={styles.rideNewText}>{t("newRequest", "NEW REQUEST")}</Text>
+                        </View>
+                        <View style={styles.rideMetaRight}>
+                          {dist && <Text style={styles.rideDist}>{dist}</Text>}
+                          {secsLeft !== null && (
+                            <View style={[styles.countdownPill, isUrgent && styles.countdownPillUrgent]}>
+                              <Text style={[styles.countdownText, isUrgent && styles.countdownUrgent]}>
+                                {secsLeft}s
+                              </Text>
+                            </View>
+                          )}
+                        </View>
                       </View>
-                      {secsLeft !== null && (
-                        <View style={[styles.countdownPill, isUrgent && styles.countdownPillUrgent]}>
-                          <Text style={[styles.countdownText, isUrgent && styles.countdownUrgent]}>
-                            {secsLeft}s
+
+                      {/* Route */}
+                      <View style={styles.routeBlock}>
+                        <View style={styles.routeDotRow}>
+                          <View style={styles.routeDotBlue} />
+                          <Text style={styles.routeFrom} numberOfLines={1}>
+                            {r.pickup_label || t("pickupLocation", "Pickup location")}
                           </Text>
                         </View>
-                      )}
-                    </View>
-
-                    {/* Route */}
-                    <View style={styles.routeBlock}>
-                      <View style={styles.routeDotRow}>
-                        <View style={styles.routeDotBlue} />
-                        <Text style={styles.routeFrom} numberOfLines={1}>
-                          {r.pickup_label || "Pickup location"}
-                        </Text>
+                        <View style={styles.routeLine} />
+                        <View style={styles.routeDotRow}>
+                          <View style={styles.routeDotTeal} />
+                          <Text style={styles.routeTo} numberOfLines={1}>
+                            {r.destination_label || t("driverNoDestinationLabel", "Destination not set")}
+                          </Text>
+                        </View>
                       </View>
-                      <View style={styles.routeLine} />
-                      <View style={styles.routeDotRow}>
-                        <View style={styles.routeDotTeal} />
-                        <Text style={styles.routeTo} numberOfLines={1}>
-                          {r.destination_label || t("driverNoDestinationLabel", "Destination not set")}
-                        </Text>
+
+                      {/* Passenger row: name + vibe + kind points */}
+                      <View style={styles.passengerRow}>
+                        {r.passenger_name && (
+                          <Text style={styles.passengerName}>👤  {r.passenger_name}</Text>
+                        )}
+                        <View style={styles.rideTagsRight}>
+                          {vibe && <VibeBadge vibe={vibe} t={t} />}
+                          <View style={styles.ptsBadge}>
+                            <Text style={styles.ptsBadgeText}>+{pts} pts</Text>
+                          </View>
+                        </View>
                       </View>
-                    </View>
 
-                    {r.passenger_name && (
-                      <Text style={styles.passengerName}>👤  {r.passenger_name}</Text>
-                    )}
-
-                    {/* Actions */}
-                    <View style={styles.rideActions}>
-                      <Pressable
-                        style={[styles.acceptBtn, (isActing || actingRideId !== null) && styles.btnDisabled]}
-                        disabled={isActing || actingRideId !== null}
-                        onPress={() => void respondInline(r.ride_id, true)}
-                      >
-                        <LinearGradient
-                          colors={["#0d9488", "#0369a1"]}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 0 }}
-                          style={styles.acceptGradient}
+                      {/* Actions */}
+                      <View style={styles.rideActions}>
+                        <Pressable
+                          style={[styles.acceptBtn, (isActing || actingRideId !== null) && styles.btnDisabled]}
+                          disabled={isActing || actingRideId !== null}
+                          onPress={() => void respondInline(r.ride_id, true)}
                         >
-                          <Text style={styles.acceptText}>{isActing ? "…" : t("accept", "Accept")}</Text>
-                        </LinearGradient>
-                      </Pressable>
-                      <Pressable
-                        style={[styles.declineBtn, (isActing || actingRideId !== null) && styles.btnDisabled]}
-                        disabled={isActing || actingRideId !== null}
-                        onPress={() => void respondInline(r.ride_id, false)}
-                      >
-                        <Text style={styles.declineText}>{t("decline", "Decline")}</Text>
-                      </Pressable>
-                      <Pressable
-                        style={styles.detailBtn}
-                        onPress={() => router.push({ pathname: "/incoming-ride", params: { rideId: r.ride_id } })}
-                      >
-                        <Text style={styles.detailText}>Details</Text>
-                      </Pressable>
+                          <LinearGradient
+                            colors={["#0d9488", "#0369a1"]}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                            style={styles.acceptGradient}
+                          >
+                            <Text style={styles.acceptText}>{isActing ? "…" : t("accept", "Accept")}</Text>
+                          </LinearGradient>
+                        </Pressable>
+                        <Pressable
+                          style={[styles.declineBtn, (isActing || actingRideId !== null) && styles.btnDisabled]}
+                          disabled={isActing || actingRideId !== null}
+                          onPress={() => void respondInline(r.ride_id, false)}
+                        >
+                          <Text style={styles.declineText}>{t("decline", "Decline")}</Text>
+                        </Pressable>
+                        <Pressable
+                          style={styles.detailBtn}
+                          onPress={() => router.push({ pathname: "/incoming-ride", params: { rideId: r.ride_id } })}
+                        >
+                          <Text style={styles.detailText}>{t("details", "Details")}</Text>
+                        </Pressable>
+                      </View>
                     </View>
-                  </View>
+                  </Reanimated.View>
                 );
               })}
             </View>
           )}
 
           {/* ── Preferences (collapsible) ──────────────────────────────────────── */}
-          <Pressable style={styles.sectionHeader} onPress={() => setPrefsOpen((o) => !o)}>
-            <Text style={styles.sectionTitle}>Preferences</Text>
+          <Pressable
+            style={styles.sectionHeader}
+            onPress={() => {
+              setPrefsOpen((o) => !o);
+              Haptics.selectionAsync();
+            }}
+          >
+          <Text style={styles.sectionTitle}>{t("preferences", "Preferences")}</Text>
             <Text style={styles.chevron}>{prefsOpen ? "▲" : "▼"}</Text>
           </Pressable>
 
           {prefsOpen && (
-            <View style={styles.card}>
-              {/* Display name */}
-              <Text style={styles.fieldLabel}>Display name</Text>
+            <Reanimated.View entering={FadeInDown.duration(300)} style={styles.card}>
+            <Text style={styles.fieldLabel}>{t("displayName", "Display name")}</Text>
               <TextInput
                 style={styles.input}
                 value={displayName}
                 onChangeText={setDisplayName}
-                placeholder="Your name shown to passengers"
+              placeholder={t("displayNameHint", "Your name shown to passengers")}
                 placeholderTextColor="#94a3b8"
                 onBlur={() => { if (isAvailable) syncPresence(true); }}
               />
-
               <View style={styles.divider} />
-
-              {/* Alert sound */}
               <View style={styles.prefRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.fieldLabel}>Alert sound</Text>
-                  <Text style={styles.fieldHint}>Chime when a new ride request arrives</Text>
+                <Text style={styles.fieldLabel}>{t("alertSound", "Alert sound")}</Text>
+                <Text style={styles.fieldHint}>{t("alertSoundHint", "Chime when a new ride request arrives")}</Text>
                 </View>
                 <Switch
                   value={soundEnabled}
@@ -515,12 +763,9 @@ export default function DriverDashboardScreen() {
                   thumbColor="#ffffff"
                 />
               </View>
-
               <View style={styles.divider} />
-
-              {/* Intent */}
               <Text style={styles.fieldLabel}>{t("driverIntent", "Ride intent")}</Text>
-              <Text style={styles.fieldHint}>Are you already heading somewhere, or willing to detour?</Text>
+            <Text style={styles.fieldHint}>{t("driverIntentHint", "Are you already heading somewhere, or willing to detour?")}</Text>
               <View style={styles.chipRow}>
                 {(["already_going", "detour"] as const).map((v) => (
                   <Pressable
@@ -534,10 +779,7 @@ export default function DriverDashboardScreen() {
                   </Pressable>
                 ))}
               </View>
-
               <View style={styles.divider} />
-
-              {/* Heading */}
               <Text style={styles.fieldLabel}>{t("heading", "Heading")}</Text>
               <View style={styles.chipRow}>
                 {(["north", "south", "east", "west"] as const).map((dir) => (
@@ -552,7 +794,7 @@ export default function DriverDashboardScreen() {
                   </Pressable>
                 ))}
               </View>
-            </View>
+            </Reanimated.View>
           )}
 
           {/* ── Community Hub ─────────────────────────────────────────────────── */}
@@ -599,34 +841,34 @@ export default function DriverDashboardScreen() {
                     });
                     const data = await r.json();
                     if (r.ok) { setHubName(data.hub_name); setHubCodeInput(""); }
-                    else { Alert.alert("Hub join failed", data?.detail ?? "Invalid or inactive hub code."); }
+                  else { Alert.alert(t("hubJoinFailed", "Hub join failed"), data?.detail ?? t("invalidHubCode", "Invalid or inactive hub code.")); }
                   } catch {
-                    Alert.alert("Network error", "Could not reach the server.");
+                  Alert.alert(t("networkError", "Network error"), t("couldNotReachServer", "Could not reach the server."));
                   } finally {
                     setJoiningHub(false);
                   }
                 }}
               >
-                <Text style={styles.outlineBtnText}>{joiningHub ? "Joining…" : "Join Hub"}</Text>
+              <Text style={styles.outlineBtnText}>{joiningHub ? t("joining", "Joining…") : t("joinHub", "Join Hub")}</Text>
               </Pressable>
             </View>
           )}
 
           {/* ── Identity Verification ─────────────────────────────────────────── */}
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Identity Verification</Text>
+          <Text style={styles.sectionTitle}>{t("identityVerification", "Identity Verification")}</Text>
           </View>
 
           {idVerified === null ? (
             <View style={[styles.card, { paddingVertical: 20 }]}>
-              <Text style={styles.fieldHint}>Checking verification status…</Text>
+            <Text style={styles.fieldHint}>{t("checkingVerification", "Checking verification status…")}</Text>
             </View>
           ) : idVerified ? (
             <View style={[styles.card, styles.successCard]}>
               <View style={styles.cardRow}>
                 <Text style={{ fontSize: 22 }}>✅</Text>
                 <Text style={[styles.successValue, { flex: 1 }]}>
-                  Identity verified — you appear first in passenger matching.
+                {t("identityVerifiedText", "Identity verified — you appear first in passenger matching.")}
                 </Text>
               </View>
             </View>
@@ -634,20 +876,20 @@ export default function DriverDashboardScreen() {
             <View style={[styles.card, styles.warningCard]}>
               <View style={[styles.cardRow, { marginBottom: 8 }]}>
                 <Text style={{ fontSize: 22 }}>⚠️</Text>
-                <Text style={styles.warningTitle}>Not yet verified</Text>
+              <Text style={styles.warningTitle}>{t("notYetVerified", "Not yet verified")}</Text>
               </View>
               <Text style={styles.warningBody}>
-                Verified drivers receive a match score boost and are prioritised when operators enable strict mode.
+              {t("verifiedDriversHint", "Verified drivers receive a match score boost and are prioritised when operators enable strict mode.")}
               </Text>
               <Text style={[styles.warningBody, { marginTop: 6, fontWeight: "700" }]}>
-                To verify: complete Stripe Identity from the web portal or ask your operator for the verification link.
+              {t("completeStripeIdentity", "Complete Stripe Identity from the web portal or ask your operator for the verification link.")}
               </Text>
             </View>
           )}
 
           {/* ── Receive Tips ──────────────────────────────────────────────────── */}
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Receive Tips</Text>
+          <Text style={styles.sectionTitle}>{t("receiveTips", "Receive Tips")}</Text>
           </View>
 
           {connectChargesEnabled ? (
@@ -655,15 +897,13 @@ export default function DriverDashboardScreen() {
               <View style={styles.cardRow}>
                 <Text style={{ fontSize: 22 }}>💳</Text>
                 <Text style={[styles.successValue, { flex: 1 }]}>
-                  Tip payments enabled — passengers can tip you after rides.
+                {t("tipPaymentsEnabled", "Tip payments enabled — passengers can tip you after rides.")}
                 </Text>
               </View>
             </View>
           ) : (
             <View style={styles.card}>
-              <Text style={styles.fieldHint}>
-                Set up your payout account to receive voluntary tips.{"\n"}KindRide takes 0% — every cent goes to you.
-              </Text>
+            <Text style={styles.fieldHint}>{t("setupPayoutHint", "Set up your payout account to receive voluntary tips.\nKindRide takes 0% — every cent goes to you.")}</Text>
               <Pressable
                 style={[styles.primaryBtn, connectOnboarding && styles.btnDisabled, { marginTop: 14 }]}
                 disabled={connectOnboarding}
@@ -680,17 +920,17 @@ export default function DriverDashboardScreen() {
                     if (r.ok && data.onboarding_url) {
                       await Linking.openURL(data.onboarding_url);
                     } else {
-                      Alert.alert("Setup failed", data?.detail ?? "Could not start account setup.");
+                    Alert.alert(t("setupFailed", "Setup failed"), data?.detail ?? t("couldNotStartSetup", "Could not start account setup."));
                     }
                   } catch {
-                    Alert.alert("Network error", "Could not reach the server.");
+                  Alert.alert(t("networkError", "Network error"), t("couldNotReachServer", "Could not reach the server."));
                   } finally {
                     setConnectOnboarding(false);
                   }
                 }}
               >
                 <Text style={styles.primaryBtnText}>
-                  {connectOnboarding ? "Opening…" : "Set up payout account  →"}
+                {connectOnboarding ? t("opening", "Opening…") : t("setupPayoutBtn", "Set up payout account  →")}
                 </Text>
               </Pressable>
             </View>
@@ -704,15 +944,12 @@ export default function DriverDashboardScreen() {
               end={{ x: 1, y: 0 }}
               style={styles.missionCard}
             >
-              <Text style={styles.missionEyebrow}>Community</Text>
+            <Text style={styles.missionEyebrow}>{t("community", "Community")}</Text>
               <Text style={styles.missionHeadline}>{t("driverRatePassengerSection", "Rate your passenger")}</Text>
               <Text style={styles.missionBody}>
-                Help build trust in the KindRide network by rating passengers after your trips.
+              {t("helpBuildTrust", "Help build trust in the KindRide network by rating passengers after your trips.")}
               </Text>
-              <Pressable
-                style={styles.missionBtn}
-                onPress={() => router.push("/rate-passenger")}
-              >
+              <Pressable style={styles.missionBtn} onPress={() => router.push("/rate-passenger")}>
                 <Text style={styles.missionBtnText}>{t("driverRatePassengerManual", "Rate a passenger")}  →</Text>
               </Pressable>
             </LinearGradient>
@@ -720,7 +957,7 @@ export default function DriverDashboardScreen() {
 
           {/* ── Trip history subtle link ──────────────────────────────────────── */}
           <Pressable style={styles.historyLink} onPress={() => router.push("/(tabs)/points")}>
-            <Text style={styles.historyLinkText}>View trip history & points  →</Text>
+          <Text style={styles.historyLinkText}>{t("tripHistoryLink", "Trip history & points  →")}</Text>
           </Pressable>
 
         </ScrollView>
@@ -747,66 +984,49 @@ const styles = StyleSheet.create({
   },
   signInTitle: { fontSize: 24, fontWeight: "800", color: "#0f172a", marginBottom: 8 },
   signInBody: { fontSize: 15, color: "#64748b", textAlign: "center", lineHeight: 22, marginBottom: 28 },
-  signInBtn: {
-    backgroundColor: "#0d9488", borderRadius: 14,
-    paddingVertical: 14, paddingHorizontal: 32,
-  },
+  signInBtn: { backgroundColor: "#0d9488", borderRadius: 14, paddingVertical: 14, paddingHorizontal: 32 },
   signInBtnText: { color: "#fff", fontSize: 15, fontWeight: "700" },
 
   // ── Hero
-  heroWrap: { margin: 16, marginBottom: 4 },
-  heroGradient: { borderRadius: 24, padding: 22, overflow: "hidden" },
+  hero: { paddingTop: 20, paddingBottom: 36, paddingHorizontal: 22 },
   heroTopRow: {
     flexDirection: "row", alignItems: "center",
-    justifyContent: "space-between", marginBottom: 20,
+    justifyContent: "space-between", marginBottom: 16,
   },
-  logoRow: { flexDirection: "row", alignItems: "baseline" },
+  logoRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   logoKind: { fontSize: 20, fontWeight: "800", color: "#ffffff", letterSpacing: -0.5 },
   logoRide: { fontSize: 20, fontWeight: "300", color: "#5eead4", letterSpacing: -0.5 },
-
-  statusPill: {
-    flexDirection: "row", alignItems: "center", gap: 6,
+  driverBadge: {
+    backgroundColor: "rgba(94,234,212,0.18)",
+    borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3,
+    marginLeft: 4,
+  },
+  driverBadgeText: { fontSize: 10, fontWeight: "800", color: "#5eead4", letterSpacing: 1 },
+  verifiedPill: {
+    backgroundColor: "rgba(74,222,128,0.15)",
     borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5,
+    borderWidth: 1, borderColor: "rgba(74,222,128,0.3)",
   },
-  statusPillOn: { backgroundColor: "rgba(16,185,129,0.2)" },
-  statusPillOff: { backgroundColor: "rgba(255,255,255,0.1)" },
-  statusDot: { width: 7, height: 7, borderRadius: 4 },
-  statusDotOn: { backgroundColor: "#4ade80" },
-  statusDotOff: { backgroundColor: "rgba(255,255,255,0.4)" },
-  statusPillText: { fontSize: 12, fontWeight: "700" },
-  statusTextOn: { color: "#4ade80" },
-  statusTextOff: { color: "rgba(255,255,255,0.6)" },
+  verifiedText: { fontSize: 12, fontWeight: "700", color: "#4ade80" },
 
-  heroEyebrow: { color: "rgba(255,255,255,0.55)", fontSize: 13, fontWeight: "500", marginBottom: 2 },
+  heroEyebrow: { color: "rgba(255,255,255,0.55)", fontSize: 13, fontWeight: "500" },
   heroHeadline: {
-    color: "#ffffff", fontSize: 36, fontWeight: "800",
-    letterSpacing: -0.5, marginBottom: 20,
+    color: "#ffffff", fontSize: 34, fontWeight: "800",
+    letterSpacing: -0.5, marginBottom: 12,
   },
 
-  // Stats row inside hero
-  statsRow: {
-    flexDirection: "row",
-    backgroundColor: "rgba(255,255,255,0.1)",
-    borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 8,
-    marginBottom: 16,
+  communityBadge: {
+    flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 28,
   },
-  statCell: { flex: 1, alignItems: "center" },
-  statNumber: { color: "#ffffff", fontSize: 26, fontWeight: "800", letterSpacing: -0.5 },
-  statLabel: { color: "rgba(255,255,255,0.55)", fontSize: 11, fontWeight: "600", marginTop: 2 },
-  statDivider: { width: 1, backgroundColor: "rgba(255,255,255,0.15)", marginVertical: 4 },
+  communityDot: { fontSize: 8, color: "#4ade80" },
+  communityText: { fontSize: 13, color: "rgba(255,255,255,0.65)", fontWeight: "500" },
 
-  // Toggle row
-  toggleRow: {
-    flexDirection: "row", alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.08)",
-    borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12,
-    gap: 12,
+  powerWrap: { alignItems: "center", gap: 14 },
+  powerHint: {
+    color: "rgba(255,255,255,0.75)", fontSize: 14,
+    fontWeight: "600", textAlign: "center",
   },
-  toggleRowOn: { backgroundColor: "rgba(13,148,136,0.25)" },
-  toggleLabel: { color: "#ffffff", fontSize: 14, fontWeight: "600" },
-  toggleSub: { color: "rgba(255,255,255,0.5)", fontSize: 11, marginTop: 2 },
+  powerSync: { color: "rgba(255,255,255,0.4)", fontSize: 11 },
 
   // ── Section headers
   sectionHeader: {
@@ -865,7 +1085,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#e0f2fe", borderRadius: 8,
     paddingHorizontal: 10, paddingVertical: 4,
   },
-  rideNewText: { fontSize: 12, fontWeight: "700", color: "#0369a1", letterSpacing: 0.3 },
+  rideNewText: { fontSize: 11, fontWeight: "800", color: "#0369a1", letterSpacing: 0.5 },
+  rideMetaRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  rideDist: { fontSize: 13, fontWeight: "600", color: "#64748b" },
   countdownPill: {
     backgroundColor: "#dbeafe", borderRadius: 999,
     paddingHorizontal: 10, paddingVertical: 4,
@@ -881,7 +1103,16 @@ const styles = StyleSheet.create({
   routeLine: { width: 1.5, height: 16, backgroundColor: "#e2e8f0", marginLeft: 4.5, marginVertical: 2 },
   routeFrom: { fontSize: 13, color: "#1e3a5f", fontWeight: "600", flex: 1 },
   routeTo: { fontSize: 14, color: "#0f172a", fontWeight: "700", flex: 1 },
-  passengerName: { fontSize: 13, color: "#475569", marginBottom: 14 },
+
+  passengerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
+  passengerName: { fontSize: 13, color: "#475569", flex: 1 },
+  rideTagsRight: { flexDirection: "row", alignItems: "center", gap: 6 },
+  ptsBadge: {
+    backgroundColor: "#f0fdf4", borderRadius: 20,
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderWidth: 1, borderColor: "#86efac",
+  },
+  ptsBadgeText: { fontSize: 12, fontWeight: "700", color: "#15803d" },
 
   rideActions: { flexDirection: "row", gap: 8, alignItems: "center" },
   acceptBtn: { flex: 1, borderRadius: 12, overflow: "hidden" },
@@ -920,9 +1151,7 @@ const styles = StyleSheet.create({
   chipTextActive: { color: "#0f766e", fontWeight: "700" },
 
   // ── Buttons
-  primaryBtn: {
-    backgroundColor: "#0d9488", borderRadius: 14, paddingVertical: 14, alignItems: "center",
-  },
+  primaryBtn: { backgroundColor: "#0d9488", borderRadius: 14, paddingVertical: 14, alignItems: "center" },
   primaryBtnText: { color: "#ffffff", fontSize: 15, fontWeight: "700" },
   outlineBtn: {
     borderRadius: 14, paddingVertical: 12, alignItems: "center",
@@ -947,5 +1176,5 @@ const styles = StyleSheet.create({
 
   // ── Trip history subtle link
   historyLink: { alignItems: "center", paddingVertical: 20 },
-  historyLinkText: { color: "#0d9488", fontSize: 14, fontWeight: "600" },
+  historyLinkText: { fontSize: 14, color: "#94a3b8", fontWeight: "500" },
 });
