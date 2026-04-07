@@ -176,4 +176,29 @@ This document records every non-trivial UX/technical innovation introduced beyon
 **What:** The connector lines between tier rows turn teal (`#0d9488`) for completed tiers and remain light grey for future ones.  
 **Why:** Visual "trail" behind the user reinforces progress. You can see how far you've come — not just how far you have to go.
 
-*Last updated: 2026-04-07 — Session 46*
+### 25. Simplified Mode — Accessibility Toggle (Settings Screen)
+**File:** `app/(tabs)/settings.tsx` → `simplifiedMode` state + `SIMPLIFIED_MODE_KEY` in AsyncStorage  
+**What:** A toggle in the Accessibility section switches the entire settings screen into a larger-text, fewer-options mode. Row padding increases, icon badges enlarge, subtitles are hidden, and the Notifications section collapses. A teal badge in the hero confirms the mode is active. Persists across sessions via AsyncStorage.  
+**Why:** KindRide's riders include elderly and mobility-impaired passengers. Simplified Mode makes every tap target larger and reduces cognitive load — no separate "senior mode" needed, just one toggle.
+
+### 26. Default Vibe Picker in Ride Preferences (Settings Screen)
+**File:** `app/(tabs)/settings.tsx` → `VibePicker` component, `DEFAULT_VIBE_KEY` in AsyncStorage  
+**What:** Three pill chips (🤫 Silent / 💬 Chat / 🎵 Music) inside the Ride Preferences section let users set their default vibe. Selection fires haptic feedback, persists to AsyncStorage, and will pre-fill the booking flow.  
+**Why:** Most users want the same vibe every trip. Saving it once at the preference level eliminates the friction of choosing per-booking — and drivers see it before they even arrive.
+
+### 27. Gradient Avatar Initial (Settings Screen)
+**File:** `app/(tabs)/settings.tsx` profile row  
+**What:** The profile avatar is a teal-to-blue gradient circle with the user's email/phone initial as the letter — no photo upload needed. Eliminates the generic 👤 emoji placeholder.  
+**Why:** A personalized avatar (even just a letter) creates identity and ownership. Users who feel the app "knows them" stay longer.
+
+### 28. Smart Skeleton Loading (Settings Screen)
+**File:** `app/(tabs)/settings.tsx`  
+**What:** While AsyncStorage hydration runs, the screen shows a shimmer-style skeleton: gradient hero placeholder blocks + grey rounded row placeholders — no blank screen or spinner.  
+**Why:** Consistent with the global shimmer pattern across all screens. Settings typically hydrates in <50ms but on slow devices it matters.
+
+### 29. Staggered FadeInDown Entry Animations (Settings Screen)
+**File:** `app/(tabs)/settings.tsx` — every section wrapped in `FadeInDown.delay(n).springify()`  
+**What:** Each section group fades and springs in with a 20ms stagger per section. The hero, account, preferences, notifications, safety, accessibility, language, and danger zone all enter sequentially.  
+**Why:** Staggered entry makes a long-form screen feel organised and alive rather than a static dump of settings.
+
+*Last updated: 2026-04-07 — Session 47*

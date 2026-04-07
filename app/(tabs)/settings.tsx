@@ -1,10 +1,10 @@
 import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
+import * as Haptics from "expo-haptics";
 import { Link, useRouter } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
-  Animated,
   Platform,
   Pressable,
   ScrollView,
@@ -14,8 +14,10 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import Reanimated, { FadeInDown } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { useAuth } from "@/lib/auth";
 import {
@@ -26,41 +28,111 @@ import {
   type MultiLegStyle,
 } from "@/lib/multileg-preference";
 
-// ── Row helper ────────────────────────────────────────────────────────────────
+const SIMPLIFIED_MODE_KEY = "kindride_simplified_mode";
+const DEFAULT_VIBE_KEY = "kindride_default_vibe";
+type VibeMode = "silent" | "chat" | "music";
+
+// ── SettingRow ────────────────────────────────────────────────────────────────
 function SettingRow({
-  icon, label, sub, onPress, rightEl, danger, last,
+  icon,
+  iconBg,
+  label,
+  sub,
+  onPress,
+  rightEl,
+  danger,
+  last,
+  simplified,
 }: {
   icon: string;
+  iconBg?: string;
   label: string;
   sub?: string;
   onPress?: () => void;
   rightEl?: React.ReactNode;
   danger?: boolean;
   last?: boolean;
+  simplified?: boolean;
 }) {
   return (
     <>
       <Pressable
-        style={({ pressed }) => [styles.row, pressed && onPress && styles.rowPressed]}
+        style={({ pressed }) => [
+          styles.row,
+          simplified && styles.rowSimplified,
+          pressed && onPress && styles.rowPressed,
+        ]}
         onPress={onPress}
         disabled={!onPress && !rightEl}
       >
-        <View style={[styles.rowIcon, danger && styles.rowIconDanger]}>
-          <Text style={styles.rowIconText}>{icon}</Text>
+        <View
+          style={[
+            styles.rowIcon,
+            simplified && styles.rowIconSimplified,
+            danger && styles.rowIconDanger,
+            iconBg && { backgroundColor: iconBg },
+          ]}
+        >
+          <Text style={[styles.rowIconText, simplified && styles.rowIconTextSimplified]}>{icon}</Text>
         </View>
         <View style={styles.rowContent}>
-          <Text style={[styles.rowLabel, danger && styles.rowLabelDanger]}>{label}</Text>
-          {sub ? <Text style={styles.rowSub}>{sub}</Text> : null}
+          <Text style={[styles.rowLabel, danger && styles.rowLabelDanger, simplified && styles.rowLabelSimplified]}>
+            {label}
+          </Text>
+          {sub && !simplified ? (
+            <Text style={styles.rowSub}>{sub}</Text>
+          ) : null}
         </View>
-        {rightEl ?? (onPress ? <Text style={[styles.chevron, danger && styles.chevronDanger]}>›</Text> : null)}
+        {rightEl ?? (onPress ? (
+          <Text style={[styles.chevron, danger && styles.chevronDanger]}>›</Text>
+        ) : null)}
       </Pressable>
       {!last && <View style={styles.rowDivider} />}
     </>
   );
 }
 
+// ── SectionLabel ─────────────────────────────────────────────────────────────
+function SectionLabel({ label, delay = 0 }: { label: string; delay?: number }) {
+  return (
+    <Reanimated.View entering={FadeInDown.delay(delay).springify()}>
+      <Text style={styles.groupLabel}>{label}</Text>
+    </Reanimated.View>
+  );
+}
+
+// ── VibeChip ─────────────────────────────────────────────────────────────────
+const VIBE_OPTIONS: { key: VibeMode; icon: string; label: string }[] = [
+  { key: "silent", icon: "🤫", label: "Silent" },
+  { key: "chat",   icon: "💬", label: "Chat" },
+  { key: "music",  icon: "🎵", label: "Music" },
+];
+
+function VibePicker({ value, onChange }: { value: VibeMode; onChange: (v: VibeMode) => void }) {
+  return (
+    <View style={styles.vibeRow}>
+      {VIBE_OPTIONS.map((v) => (
+        <Pressable
+          key={v.key}
+          style={[styles.vibeChip, value === v.key && styles.vibeChipActive]}
+          onPress={() => {
+            Haptics.selectionAsync();
+            onChange(v.key);
+          }}
+        >
+          <Text style={styles.vibeIcon}>{v.icon}</Text>
+          <Text style={[styles.vibeLabel, value === v.key && styles.vibeLabelActive]}>
+            {v.label}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 // ── Screen ────────────────────────────────────────────────────────────────────
 export default function SettingsScreen() {
+  "use no memo";
   const { user, signOut } = useAuth();
   const { t, i18n } = useTranslation();
   const router = useRouter();
@@ -70,38 +142,55 @@ export default function SettingsScreen() {
   const [hydrated, setHydrated] = useState(false);
   const [currentLanguage, setCurrentLanguage] = useState(i18n.language);
   const [signingOut, setSigningOut] = useState(false);
-
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [simplifiedMode, setSimplifiedMode] = useState(false);
+  const [defaultVibe, setDefaultVibe] = useState<VibeMode>("chat");
+  const [notifRideUpdates, setNotifRideUpdates] = useState(true);
+  const [notifPoints, setNotifPoints] = useState(true);
+  const [notifWeekly, setNotifWeekly] = useState(true);
+  const [notifStreak, setNotifStreak] = useState(true);
+  const [safetyRecording, setSafetyRecording] = useState(false);
 
   useEffect(() => {
-    const onLanguageChanged = (lng: string) => setCurrentLanguage(lng);
-    i18n.on("languageChanged", onLanguageChanged);
-    return () => { i18n.off("languageChanged", onLanguageChanged); };
+    const onLngChange = (lng: string) => setCurrentLanguage(lng);
+    i18n.on("languageChanged", onLngChange);
+    return () => { i18n.off("languageChanged", onLngChange); };
   }, [i18n]);
 
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       (async () => {
-        const [on, s] = await Promise.all([getMultiLegFeatureEnabled(), getMultiLegStyle()]);
+        const [on, s, sim, vibe] = await Promise.all([
+          getMultiLegFeatureEnabled(),
+          getMultiLegStyle(),
+          AsyncStorage.getItem(SIMPLIFIED_MODE_KEY),
+          AsyncStorage.getItem(DEFAULT_VIBE_KEY),
+        ]);
         if (!cancelled) {
           setMultiLegOn(on);
           setStyle(s);
+          setSimplifiedMode(sim === "true");
+          setDefaultVibe((vibe as VibeMode) ?? "chat");
           setHydrated(true);
-          Animated.timing(fadeAnim, { toValue: 1, duration: 350, useNativeDriver: true }).start();
         }
       })();
       return () => { cancelled = true; };
     }, [])
   );
 
-  const toggleFeature = async (value: boolean) => {
-    setMultiLegOn(value);
-    await setMultiLegFeatureEnabled(value);
+  const toggleSimplified = async (val: boolean) => {
+    setSimplifiedMode(val);
+    await AsyncStorage.setItem(SIMPLIFIED_MODE_KEY, String(val));
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   };
 
-  const toggleStyle = async (value: boolean) => {
-    const next: MultiLegStyle = value ? "sooner" : "last_resort";
+  const toggleFeature = async (val: boolean) => {
+    setMultiLegOn(val);
+    await setMultiLegFeatureEnabled(val);
+  };
+
+  const toggleStyle = async (val: boolean) => {
+    const next: MultiLegStyle = val ? "sooner" : "last_resort";
     setStyle(next);
     await setMultiLegStyle(next);
   };
@@ -109,16 +198,23 @@ export default function SettingsScreen() {
   const changeLanguage = async (lang: string) => {
     await i18n.changeLanguage(lang);
     setCurrentLanguage(lang);
+    Haptics.selectionAsync();
+  };
+
+  const changeVibe = async (vibe: VibeMode) => {
+    setDefaultVibe(vibe);
+    await AsyncStorage.setItem(DEFAULT_VIBE_KEY, vibe);
   };
 
   const handleSignOut = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     Alert.alert(
-      "Sign out",
-      "Are you sure you want to sign out?",
+      t("signOut", "Sign out"),
+      t("areYouSureSignOut", "Are you sure you want to sign out?"),
       [
-        { text: "Cancel", style: "cancel" },
+        { text: t("cancel", "Cancel"), style: "cancel" },
         {
-          text: "Sign out",
+          text: t("signOut", "Sign out"),
           style: "destructive",
           onPress: async () => {
             setSigningOut(true);
@@ -132,237 +228,410 @@ export default function SettingsScreen() {
   };
 
   const handleDeleteAccount = () => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     Alert.alert(
-      "Delete account",
-      "This permanently deletes your account and all data. This cannot be undone.",
+      t("deleteAccount", "Delete account"),
+      t("deleteAccountWarning", "This permanently deletes your account and all data. This cannot be undone."),
       [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete permanently", style: "destructive", onPress: () => {
-          Alert.alert("Contact support", "To delete your account, email privacy@kindride.org with your user ID.");
-        }},
+        { text: t("cancel", "Cancel"), style: "cancel" },
+        {
+          text: t("deletePermanently", "Delete permanently"),
+          style: "destructive",
+          onPress: () => {
+            Alert.alert(
+              t("contactSupport", "Contact support"),
+              t("deleteAccountInstructions", "To delete your account, email privacy@kindride.org with your user ID.")
+            );
+          },
+        },
       ]
     );
   };
 
-  // ── Loading ───────────────────────────────────────────────────────────────────
+  // ── Skeleton while loading
   if (!hydrated) {
     return (
       <SafeAreaView style={styles.root} edges={["top"]}>
-        <View style={styles.loadingCenter}>
-          <Text style={styles.loadingText}>Loading…</Text>
-        </View>
+        <LinearGradient
+          colors={["#0c1f3f", "#0e4a6e", "#0a5c54"]}
+          style={[styles.hero, { justifyContent: "flex-end" }]}
+        >
+          <View style={styles.skeletonTitle} />
+          <View style={styles.skeletonSub} />
+        </LinearGradient>
+        {[1, 2, 3, 4].map((i) => (
+          <View key={i} style={styles.skeletonGroup}>
+            {[1, 2].map((j) => (
+              <View key={j} style={styles.skeletonRow} />
+            ))}
+          </View>
+        ))}
       </SafeAreaView>
     );
   }
 
+  const S = simplifiedMode; // shorthand — simplified mode flag
   const displayEmail = user?.email ?? user?.phone ?? null;
   const LANGS = [
-    { code: "en", label: t("english", "English"), flag: "🇺🇸" },
-    { code: "es", label: t("spanish", "Español"),  flag: "🇲🇽" },
-    { code: "ar", label: t("arabic", "العربية"),   flag: "🇸🇦" },
+    { code: "en", label: "English", flag: "🇺🇸" },
+    { code: "es", label: "Español", flag: "🇲🇽" },
+    { code: "ar", label: "العربية", flag: "🇸🇦" },
   ] as const;
 
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
-      <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
-        <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: 48 }}
-          showsVerticalScrollIndicator={false}
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: 56 }}
+        showsVerticalScrollIndicator={false}
+      >
+
+        {/* ── Hero ──────────────────────────────────────────────────────────── */}
+        <LinearGradient
+          colors={["#0c1f3f", "#0e4a6e", "#0a5c54"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.hero}
         >
-
-          {/* ── Hero ───────────────────────────────────────────────────────── */}
-          <View style={styles.heroWrap}>
-            <LinearGradient
-              colors={["#0c1f3f", "#0e4a6e", "#0a5c54"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.heroGradient}
-            >
-              <View style={styles.logoRow}>
-                <Text style={styles.logoKind}>Kind</Text>
-                <Text style={styles.logoRide}>Ride</Text>
+          <Reanimated.View entering={FadeInDown.delay(0).springify()} style={styles.logoRow}>
+            <Text style={styles.logoKind}>Kind</Text>
+            <Text style={styles.logoRide}>Ride</Text>
+          </Reanimated.View>
+          <Reanimated.View entering={FadeInDown.delay(60).springify()} style={styles.heroBadge}>
+            <Text style={styles.heroBadgeText}>⚙️  {t("settings", "Settings")}</Text>
+          </Reanimated.View>
+          <Reanimated.View entering={FadeInDown.delay(100).springify()}>
+            <Text style={styles.heroHeadline}>
+              {t("settingsIntro", "Your preferences,\nyour experience.")}
+            </Text>
+            {simplifiedMode && (
+              <View style={styles.simplifiedBadge}>
+                <Text style={styles.simplifiedBadgeText}>🔠  Simplified mode ON</Text>
               </View>
-
-              <View style={styles.heroBadge}>
-                <Text style={styles.heroBadgeText}>⚙️  Settings</Text>
-              </View>
-
-              <Text style={styles.heroHeadline}>{t("settingsIntro", "Your preferences,\nyour experience.")}</Text>
-              <Text style={styles.heroSub}>
-                Language, ride matching, and privacy — all in one place.
-              </Text>
-            </LinearGradient>
-          </View>
-
-          {/* ── Account ────────────────────────────────────────────────────── */}
-          <Text style={styles.groupLabel}>Account</Text>
-          <View style={styles.group}>
-            {user ? (
-              <>
-                {/* Profile row */}
-                <View style={styles.profileRow}>
-                  <View style={styles.avatar}>
-                    <Text style={{ fontSize: 24 }}>👤</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.profileName}>{displayEmail ?? "Signed in"}</Text>
-                    <Text style={styles.profileSub}>Active driver account</Text>
-                  </View>
-                </View>
-                <View style={styles.rowDivider} />
-
-                {/* User ID row */}
-                <View style={styles.idBlock}>
-                  <Text style={styles.idLabel}>{t("testingAccountId", "User ID")}</Text>
-                  <Text style={styles.idHint}>{t("testingAccountHint1", "Share this with support if you need help.")}</Text>
-                  <View style={styles.monoWrap}>
-                    <Text style={styles.monoText} selectable>{user.id}</Text>
-                  </View>
-                </View>
-              </>
-            ) : (
-              <>
-                <SettingRow
-                  icon="🔑"
-                  label={t("signIn", "Sign in")}
-                  sub={t("driverNotShowingHint", "Sign in to access your full account")}
-                  onPress={() => router.push("/sign-in")}
-                  last
-                />
-              </>
             )}
-          </View>
+          </Reanimated.View>
+        </LinearGradient>
 
-          {/* ── Trip Preferences ───────────────────────────────────────────── */}
-          <Text style={styles.groupLabel}>Trip Preferences</Text>
-          <View style={styles.group}>
-            <SettingRow
-              icon="🔀"
-              label={t("allowMultiLeg", "Multi-leg rides")}
-              sub={t("allowMultiLegHint", "Allow connecting via multiple drivers")}
-              rightEl={
-                <Switch
-                  value={multiLegOn}
-                  onValueChange={toggleFeature}
-                  trackColor={{ false: "#e2e8f0", true: "#0d9488" }}
-                  thumbColor="#ffffff"
-                />
-              }
-            />
-            <SettingRow
-              icon="⚡"
-              label={t("considerMultiLegSooner", "Prefer multi-leg sooner")}
-              sub={t("considerMultiLegSoonerHint", "Offer connections earlier in matching")}
-              last
-              rightEl={
-                <Switch
-                  value={style === "sooner"}
-                  onValueChange={toggleStyle}
-                  disabled={!multiLegOn}
-                  trackColor={{ false: "#e2e8f0", true: "#0d9488" }}
-                  thumbColor="#ffffff"
-                  style={{ opacity: multiLegOn ? 1 : 0.4 }}
-                />
-              }
-            />
-          </View>
-
-          {/* ── Language ───────────────────────────────────────────────────── */}
-          <Text style={styles.groupLabel}>{t("language", "Language")}</Text>
-          <View style={styles.group}>
-            <View style={styles.langWrap}>
-              <Text style={styles.langHint}>{t("choosePreferredLanguage", "Choose your preferred language")}</Text>
-              <View style={styles.langRow}>
-                {LANGS.map(({ code, label, flag }) => {
-                  const active = currentLanguage === code;
-                  return (
-                    <TouchableOpacity
-                      key={code}
-                      style={[styles.langChip, active && styles.langChipActive]}
-                      onPress={() => changeLanguage(code)}
-                      activeOpacity={0.75}
-                    >
-                      <Text style={styles.langFlag}>{flag}</Text>
-                      <Text style={[styles.langChipText, active && styles.langChipTextActive]}>
-                        {label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-          </View>
-
-          {/* ── Support ────────────────────────────────────────────────────── */}
-          <Text style={styles.groupLabel}>Support</Text>
-          <View style={styles.group}>
-            <SettingRow
-              icon="📖"
-              label="Help & FAQ"
-              sub="Answers to common questions"
-              onPress={() => Alert.alert("Help", "Visit kindride.org/help for full documentation.")}
-            />
-            <SettingRow
-              icon="🔒"
-              label="Privacy Policy"
-              sub="How we handle your data"
-              onPress={() => Alert.alert("Privacy", "View our full policy at kindride.org/privacy.")}
-            />
-            <SettingRow
-              icon="📄"
-              label="Terms of Service"
-              onPress={() => Alert.alert("Terms", "View terms at kindride.org/terms.")}
-              last
-            />
-          </View>
-
-          {/* ── Privacy card ─────────────────────────────────────────────── */}
-          <View style={styles.missionWrap}>
-            <LinearGradient
-              colors={["#0d9488", "#0369a1"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.missionCard}
-            >
-              <Text style={styles.missionEyebrow}>Our Promise</Text>
-              <Text style={styles.missionHeadline}>Privacy-first, always.</Text>
-              <Text style={styles.missionBody}>
-                KindRide never sells your data. Your location stays on your device until you choose to share a ride.
-              </Text>
-            </LinearGradient>
-          </View>
-
-          {/* ── Danger zone ───────────────────────────────────────────────── */}
-          {user && (
+        {/* ── ACCOUNT ──────────────────────────────────────────────────────── */}
+        <SectionLabel label={t("account", "Account")} delay={80} />
+        <Reanimated.View entering={FadeInDown.delay(100).springify()} style={styles.group}>
+          {user ? (
             <>
-              <Text style={styles.groupLabel}>Account Actions</Text>
-              <View style={styles.group}>
-                <SettingRow
-                  icon="↩️"
-                  label={signingOut ? "Signing out…" : "Sign out"}
-                  danger
-                  onPress={signingOut ? undefined : handleSignOut}
-                />
-                <SettingRow
-                  icon="🗑️"
-                  label="Delete account"
-                  sub="Permanently removes all your data"
-                  danger
-                  last
-                  onPress={handleDeleteAccount}
-                />
+              <View style={styles.profileRow}>
+                <LinearGradient
+                  colors={["#0d9488", "#0369a1"]}
+                  style={styles.avatarGradient}
+                >
+                  <Text style={styles.avatarLetter}>
+                    {(displayEmail ?? "U").charAt(0).toUpperCase()}
+                  </Text>
+                </LinearGradient>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.profileName, S && styles.profileNameLarge]}>
+                    {displayEmail ?? t("signedIn", "Signed in")}
+                  </Text>
+                  <Text style={styles.profileSub}>Active account ✓</Text>
+                </View>
+              </View>
+              <View style={styles.rowDivider} />
+              <View style={styles.idBlock}>
+                <Text style={styles.idLabel}>User ID</Text>
+                <Text style={styles.idHint}>Share with support if you need help.</Text>
+                <View style={styles.monoWrap}>
+                  <Text style={styles.monoText} selectable>{user.id}</Text>
+                </View>
               </View>
             </>
+          ) : (
+            <SettingRow
+              icon="🔑"
+              iconBg="#fef3c7"
+              label={t("signIn", "Sign in")}
+              sub="Sign in to access your full account"
+              onPress={() => router.push("/sign-in")}
+              simplified={S}
+              last
+            />
           )}
+        </Reanimated.View>
 
-          {/* ── Back link ─────────────────────────────────────────────────── */}
-          <Link href="/(tabs)" style={styles.backLinkWrap}>
-            <Text style={styles.backLinkText}>{t("backToHome", "Back to home")}  →</Text>
-          </Link>
+        {/* ── RIDE PREFERENCES ─────────────────────────────────────────────── */}
+        <SectionLabel label={t("tripPreferencesLabel", "Ride Preferences")} delay={120} />
+        <Reanimated.View entering={FadeInDown.delay(140).springify()} style={styles.group}>
+          {/* Default vibe */}
+          <View style={[styles.row, S && styles.rowSimplified]}>
+            <View style={[styles.rowIcon, { backgroundColor: "#fdf4ff" }]}>
+              <Text style={styles.rowIconText}>🎭</Text>
+            </View>
+            <View style={styles.rowContent}>
+              <Text style={[styles.rowLabel, S && styles.rowLabelSimplified]}>Default vibe</Text>
+              {!S && <Text style={styles.rowSub}>Shown to drivers before pickup</Text>}
+            </View>
+          </View>
+          <View style={styles.vibePadding}>
+            <VibePicker value={defaultVibe} onChange={changeVibe} />
+          </View>
+          <View style={styles.rowDivider} />
 
-        </ScrollView>
-      </Animated.View>
+          {/* Saved places */}
+          <SettingRow
+            icon="📍"
+            iconBg="#fef2f2"
+            label="Saved places"
+            sub="Home, work, and favourite spots"
+            onPress={() => Alert.alert("Saved places", "Saved places manager coming soon.")}
+            simplified={S}
+          />
+          <SettingRow
+            icon="🔀"
+            iconBg="#f0fdf4"
+            label={t("allowMultiLeg", "Multi-leg rides")}
+            sub="Allow connecting via multiple drivers"
+            rightEl={
+              <Switch
+                value={multiLegOn}
+                onValueChange={toggleFeature}
+                trackColor={{ false: "#e2e8f0", true: "#0d9488" }}
+                thumbColor="#ffffff"
+              />
+            }
+            simplified={S}
+          />
+          <SettingRow
+            icon="⚡"
+            iconBg="#fffbeb"
+            label={t("considerMultiLegSooner", "Prefer multi-leg sooner")}
+            sub="Offer connections earlier in matching"
+            last
+            simplified={S}
+            rightEl={
+              <Switch
+                value={style === "sooner"}
+                onValueChange={toggleStyle}
+                disabled={!multiLegOn}
+                trackColor={{ false: "#e2e8f0", true: "#0d9488" }}
+                thumbColor="#ffffff"
+                style={{ opacity: multiLegOn ? 1 : 0.4 }}
+              />
+            }
+          />
+        </Reanimated.View>
+
+        {/* ── NOTIFICATIONS ─────────────────────────────────────────────────── */}
+        {!S && (
+          <>
+            <SectionLabel label="Notifications" delay={160} />
+            <Reanimated.View entering={FadeInDown.delay(180).springify()} style={styles.group}>
+              <SettingRow
+                icon="🚗"
+                iconBg="#eff6ff"
+                label="Ride updates"
+                sub="Driver arriving, trip started"
+                rightEl={
+                  <Switch value={notifRideUpdates} onValueChange={setNotifRideUpdates}
+                    trackColor={{ false: "#e2e8f0", true: "#0d9488" }} thumbColor="#fff" />
+                }
+              />
+              <SettingRow
+                icon="⭐"
+                iconBg="#f0fdf4"
+                label="Points earned"
+                sub="When you gain Kind Points"
+                rightEl={
+                  <Switch value={notifPoints} onValueChange={setNotifPoints}
+                    trackColor={{ false: "#e2e8f0", true: "#0d9488" }} thumbColor="#fff" />
+                }
+              />
+              <SettingRow
+                icon="📊"
+                iconBg="#fdf4ff"
+                label="Weekly impact summary"
+                sub="Every Monday morning"
+                rightEl={
+                  <Switch value={notifWeekly} onValueChange={setNotifWeekly}
+                    trackColor={{ false: "#e2e8f0", true: "#0d9488" }} thumbColor="#fff" />
+                }
+              />
+              <SettingRow
+                icon="🔥"
+                iconBg="#fff7ed"
+                label="Streak reminder"
+                sub="Alert when streak is at risk"
+                last
+                rightEl={
+                  <Switch value={notifStreak} onValueChange={setNotifStreak}
+                    trackColor={{ false: "#e2e8f0", true: "#0d9488" }} thumbColor="#fff" />
+                }
+              />
+            </Reanimated.View>
+          </>
+        )}
+
+        {/* ── SAFETY ────────────────────────────────────────────────────────── */}
+        <SectionLabel label="Safety" delay={200} />
+        <Reanimated.View entering={FadeInDown.delay(220).springify()} style={styles.group}>
+          <SettingRow
+            icon="🛡️"
+            iconBg="#f0fdf4"
+            label="Identity verification"
+            sub="Verify your ID for trust boost"
+            onPress={() => Alert.alert("Identity", "Complete Stripe Identity via the web portal or ask your operator.")}
+            simplified={S}
+          />
+          <SettingRow
+            icon="🎙️"
+            iconBg="#eff6ff"
+            label="Audio recording consent"
+            sub="Encrypted, 24hr, dispute-only access"
+            simplified={S}
+            rightEl={
+              <Switch
+                value={safetyRecording}
+                onValueChange={(val) => {
+                  setSafetyRecording(val);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                trackColor={{ false: "#e2e8f0", true: "#0d9488" }}
+                thumbColor="#fff"
+              />
+            }
+          />
+          <SettingRow
+            icon="🆘"
+            iconBg="#fef2f2"
+            label="SOS & emergency contacts"
+            sub="Contacts called if SOS triggered"
+            onPress={() => router.push("/sos")}
+            simplified={S}
+            last
+          />
+        </Reanimated.View>
+
+        {/* ── ACCESSIBILITY ─────────────────────────────────────────────────── */}
+        <SectionLabel label="Accessibility" delay={240} />
+        <Reanimated.View entering={FadeInDown.delay(260).springify()} style={styles.group}>
+          <SettingRow
+            icon="🔠"
+            iconBg="#f0fdf4"
+            label="Simplified mode"
+            sub="Larger text, fewer options — great for all ages"
+            simplified={S}
+            rightEl={
+              <Switch
+                value={simplifiedMode}
+                onValueChange={toggleSimplified}
+                trackColor={{ false: "#e2e8f0", true: "#0d9488" }}
+                thumbColor="#fff"
+              />
+            }
+            last
+          />
+        </Reanimated.View>
+
+        {/* ── LANGUAGE ─────────────────────────────────────────────────────── */}
+        <SectionLabel label={t("language", "Language")} delay={280} />
+        <Reanimated.View entering={FadeInDown.delay(300).springify()} style={styles.group}>
+          <View style={styles.langWrap}>
+            {!S && <Text style={styles.langHint}>Choose your preferred language</Text>}
+            <View style={styles.langRow}>
+              {LANGS.map(({ code, label, flag }) => {
+                const active = currentLanguage === code;
+                return (
+                  <TouchableOpacity
+                    key={code}
+                    style={[styles.langChip, active && styles.langChipActive, S && styles.langChipSimplified]}
+                    onPress={() => changeLanguage(code)}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[styles.langFlag, S && { fontSize: 22 }]}>{flag}</Text>
+                    <Text style={[styles.langChipText, active && styles.langChipTextActive, S && styles.langChipTextSimplified]}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </Reanimated.View>
+
+        {/* ── ABOUT ─────────────────────────────────────────────────────────── */}
+        <SectionLabel label="About" delay={320} />
+        <Reanimated.View entering={FadeInDown.delay(340).springify()} style={styles.group}>
+          <SettingRow
+            icon="📖"
+            iconBg="#f8fafc"
+            label={t("helpFaq", "Help & FAQ")}
+            sub="Answers to common questions"
+            onPress={() => Alert.alert(t("help", "Help"), "Visit kindride.org/help for full documentation.")}
+            simplified={S}
+          />
+          <SettingRow
+            icon="🔒"
+            iconBg="#f8fafc"
+            label={t("privacyPolicy", "Privacy Policy")}
+            sub="How we handle your data"
+            onPress={() => Alert.alert("Privacy", "View our full policy at kindride.org/privacy.")}
+            simplified={S}
+          />
+          <SettingRow
+            icon="📄"
+            iconBg="#f8fafc"
+            label={t("termsOfService", "Terms of Service")}
+            onPress={() => Alert.alert("Terms", "View terms at kindride.org/terms.")}
+            simplified={S}
+            last
+          />
+        </Reanimated.View>
+
+        {/* ── Privacy mission card ─────────────────────────────────────────── */}
+        <Reanimated.View entering={FadeInDown.delay(360).springify()} style={styles.missionWrap}>
+          <LinearGradient
+            colors={["#0d9488", "#0369a1"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.missionCard}
+          >
+            <Text style={styles.missionEyebrow}>Our Promise</Text>
+            <Text style={styles.missionHeadline}>Privacy-first, always.</Text>
+            <Text style={styles.missionBody}>
+              KindRide never sells your data. Your location stays on your device until you choose to share a ride.
+            </Text>
+          </LinearGradient>
+        </Reanimated.View>
+
+        {/* ── DANGER ZONE ──────────────────────────────────────────────────── */}
+        {user && (
+          <>
+            <View style={styles.dangerSpacer} />
+            <Reanimated.View entering={FadeInDown.delay(380).springify()} style={styles.dangerGroup}>
+              <SettingRow
+                icon="↩️"
+                iconBg="#fef2f2"
+                label={signingOut ? "Signing out…" : t("signOut", "Sign out")}
+                danger
+                simplified={S}
+                onPress={signingOut ? undefined : handleSignOut}
+              />
+              <SettingRow
+                icon="🗑️"
+                iconBg="#fef2f2"
+                label={t("deleteAccount", "Delete account")}
+                sub="Permanently removes all your data"
+                danger
+                simplified={S}
+                last
+                onPress={handleDeleteAccount}
+              />
+            </Reanimated.View>
+          </>
+        )}
+
+        {/* ── Back link ────────────────────────────────────────────────────── */}
+        <Link href="/(tabs)" style={styles.backLinkWrap}>
+          <Text style={[styles.backLinkText, S && { fontSize: 18 }]}>Back to home  →</Text>
+        </Link>
+
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -370,33 +639,52 @@ export default function SettingsScreen() {
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const shadow = Platform.select({
-  ios: { shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 6 },
-  android: { elevation: 2 },
+  ios: { shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 12 },
+  android: { elevation: 3 },
 });
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#f8fafc" },
 
-  loadingCenter: { flex: 1, alignItems: "center", justifyContent: "center" },
-  loadingText: { fontSize: 15, color: "#94a3b8" },
+  // ── Skeleton
+  skeletonTitle: {
+    height: 28, width: "55%", borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.2)", marginBottom: 10,
+  },
+  skeletonSub: {
+    height: 16, width: "70%", borderRadius: 8,
+    backgroundColor: "rgba(255,255,255,0.12)",
+  },
+  skeletonGroup: {
+    backgroundColor: "#fff", borderRadius: 20,
+    marginHorizontal: 16, marginTop: 16, padding: 12, gap: 10, ...shadow,
+  },
+  skeletonRow: {
+    height: 44, borderRadius: 10,
+    backgroundColor: "#f1f5f9",
+  },
 
   // ── Hero
-  heroWrap: { margin: 16, marginBottom: 8 },
-  heroGradient: { borderRadius: 24, padding: 22, overflow: "hidden" },
-  logoRow: { flexDirection: "row", alignItems: "baseline", marginBottom: 18 },
+  hero: { paddingTop: 20, paddingBottom: 28, paddingHorizontal: 22 },
+  logoRow: { flexDirection: "row", alignItems: "baseline", marginBottom: 16 },
   logoKind: { fontSize: 20, fontWeight: "800", color: "#ffffff", letterSpacing: -0.5 },
   logoRide: { fontSize: 20, fontWeight: "300", color: "#5eead4", letterSpacing: -0.5 },
   heroBadge: {
     alignSelf: "flex-start",
     backgroundColor: "rgba(255,255,255,0.15)",
-    borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5, marginBottom: 16,
+    borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5, marginBottom: 14,
   },
   heroBadgeText: { color: "#99f6e4", fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
   heroHeadline: {
     color: "#ffffff", fontSize: 26, fontWeight: "800",
-    lineHeight: 32, letterSpacing: -0.3, marginBottom: 10,
+    lineHeight: 32, letterSpacing: -0.3,
   },
-  heroSub: { color: "#a5f3fc", fontSize: 14, lineHeight: 21 },
+  simplifiedBadge: {
+    marginTop: 12, alignSelf: "flex-start",
+    backgroundColor: "rgba(94,234,212,0.2)",
+    borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6,
+  },
+  simplifiedBadgeText: { color: "#5eead4", fontSize: 12, fontWeight: "700" },
 
   // ── Group layout
   groupLabel: {
@@ -409,37 +697,50 @@ const styles = StyleSheet.create({
     borderRadius: 20, marginHorizontal: 16, ...shadow,
     overflow: "hidden",
   },
+  dangerSpacer: { height: 12 },
+  dangerGroup: {
+    backgroundColor: "#fff",
+    borderRadius: 20, marginHorizontal: 16,
+    borderWidth: 1, borderColor: "#fee2e2", ...shadow,
+    overflow: "hidden",
+  },
 
   // ── Rows
   row: {
     flexDirection: "row", alignItems: "center",
     paddingHorizontal: 16, paddingVertical: 14, gap: 12,
   },
+  rowSimplified: { paddingVertical: 20 },
   rowPressed: { backgroundColor: "#f8fafc" },
   rowIcon: {
-    width: 36, height: 36, borderRadius: 10,
+    width: 38, height: 38, borderRadius: 11,
     backgroundColor: "#f1f5f9", alignItems: "center", justifyContent: "center",
   },
+  rowIconSimplified: { width: 48, height: 48, borderRadius: 14 },
   rowIconDanger: { backgroundColor: "#fef2f2" },
   rowIconText: { fontSize: 17 },
+  rowIconTextSimplified: { fontSize: 22 },
   rowContent: { flex: 1 },
   rowLabel: { fontSize: 15, fontWeight: "600", color: "#1e293b" },
+  rowLabelSimplified: { fontSize: 18, fontWeight: "700" },
   rowLabelDanger: { color: "#dc2626" },
   rowSub: { fontSize: 12, color: "#94a3b8", marginTop: 2, lineHeight: 16 },
   chevron: { fontSize: 22, color: "#cbd5e1", fontWeight: "300" },
   chevronDanger: { color: "#fca5a5" },
-  rowDivider: { height: 1, backgroundColor: "#f1f5f9", marginLeft: 64 },
+  rowDivider: { height: 1, backgroundColor: "#f1f5f9", marginLeft: 66 },
 
-  // ── Account / profile
+  // ── Profile
   profileRow: {
     flexDirection: "row", alignItems: "center",
-    paddingHorizontal: 16, paddingVertical: 16, gap: 12,
+    paddingHorizontal: 16, paddingVertical: 16, gap: 14,
   },
-  avatar: {
-    width: 48, height: 48, borderRadius: 16,
-    backgroundColor: "#f0fdfa", alignItems: "center", justifyContent: "center",
+  avatarGradient: {
+    width: 52, height: 52, borderRadius: 16,
+    alignItems: "center", justifyContent: "center",
   },
-  profileName: { fontSize: 15, fontWeight: "700", color: "#0f172a", marginBottom: 2 },
+  avatarLetter: { fontSize: 22, fontWeight: "800", color: "#fff" },
+  profileName: { fontSize: 15, fontWeight: "700", color: "#0f172a", marginBottom: 3 },
+  profileNameLarge: { fontSize: 18 },
   profileSub: { fontSize: 12, color: "#0d9488", fontWeight: "600" },
   idBlock: { paddingHorizontal: 16, paddingBottom: 16 },
   idLabel: {
@@ -454,6 +755,20 @@ const styles = StyleSheet.create({
   },
   monoText: { fontFamily: "monospace", fontSize: 11, color: "#0f172a", lineHeight: 18 },
 
+  // ── Vibe picker
+  vibePadding: { paddingHorizontal: 16, paddingBottom: 14 },
+  vibeRow: { flexDirection: "row", gap: 8 },
+  vibeChip: {
+    flex: 1, flexDirection: "column", alignItems: "center",
+    gap: 4, paddingVertical: 12,
+    borderRadius: 14, borderWidth: 1.5, borderColor: "#e2e8f0",
+    backgroundColor: "#f8fafc",
+  },
+  vibeChipActive: { backgroundColor: "#f0fdfa", borderColor: "#0d9488" },
+  vibeIcon: { fontSize: 20 },
+  vibeLabel: { fontSize: 12, fontWeight: "600", color: "#475569" },
+  vibeLabelActive: { color: "#0f766e", fontWeight: "700" },
+
   // ── Language
   langWrap: { padding: 16 },
   langHint: { fontSize: 13, color: "#64748b", marginBottom: 12 },
@@ -463,13 +778,15 @@ const styles = StyleSheet.create({
     gap: 6, paddingVertical: 10,
     borderRadius: 12, borderWidth: 1, borderColor: "#e2e8f0", backgroundColor: "#f8fafc",
   },
+  langChipSimplified: { paddingVertical: 16 },
   langChipActive: { backgroundColor: "#0d9488", borderColor: "#0d9488" },
   langFlag: { fontSize: 14 },
   langChipText: { fontSize: 12, fontWeight: "600", color: "#475569" },
+  langChipTextSimplified: { fontSize: 15 },
   langChipTextActive: { color: "#ffffff", fontWeight: "700" },
 
   // ── Mission card
-  missionWrap: { paddingHorizontal: 16, paddingTop: 20, marginBottom: 4 },
+  missionWrap: { paddingHorizontal: 16, paddingTop: 24, marginBottom: 4 },
   missionCard: { borderRadius: 20, padding: 22 },
   missionEyebrow: {
     color: "rgba(255,255,255,0.7)", fontSize: 11, fontWeight: "700",
@@ -479,6 +796,6 @@ const styles = StyleSheet.create({
   missionBody: { color: "rgba(255,255,255,0.85)", fontSize: 13, lineHeight: 20 },
 
   // ── Back link
-  backLinkWrap: { alignSelf: "center", paddingVertical: 20 },
+  backLinkWrap: { alignSelf: "center", paddingVertical: 24 },
   backLinkText: { color: "#94a3b8", fontSize: 14, fontWeight: "600" },
 });
