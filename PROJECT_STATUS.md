@@ -1,6 +1,6 @@
 # KindRide - Project Status
 
-Last updated: 2026-04-07 (Session 43: Git backup + blueprint alignment)
+Last updated: 2026-04-07 (Session 44: Innovation directive + Home v2 + animated splash)
 Owner: Oluwafemi Adebayo Adeyemi
 
 ## Product north star (Founder Blueprint v1.1)
@@ -62,6 +62,7 @@ Week 2 Session 40 is complete (P2.1–P2.3: Stripe Identity, Trip Recording meta
 Week 2 Session 41 is complete (P2.4–P2.5: Founding Driver Badge, Hub Onboarding, EAS Build, Onboarding Slides, Security Checklist).
 Week 2 Session 42 is complete (World-class UI redesign — all 5 main tabs + auth screens).
 Week 2 Session 43 is complete (Git backup, PROJECT_STATUS sync, blueprint alignment check).
+Week 2 Session 44 is complete (Innovation directive — animated splash, Home screen v2 with shimmer/stories/haptics/count-up, INNOVATIONS.md log created).
 
 Working app flow (phone-tested):
 1. Home screen (`app/(tabs)/index.tsx`)
