@@ -11,7 +11,7 @@ import {
   Linking,
   Platform,
   Pressable,
-t hit  RefreshControl,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Switch,
