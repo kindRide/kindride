@@ -141,4 +141,39 @@ This document records every non-trivial UX/technical innovation introduced beyon
 
 ---
 
-*Last updated: 2026-04-07 — Session 45*
+### 18. Animated Count-Up Score (Points Screen)
+**File:** `app/(tabs)/points.tsx` → `AnimatedScore` component  
+**What:** The headline points number counts up from (target - 120) to the real value over ~1.1s using a `setInterval` step loop, combined with a Reanimated `withSpring` scale-in on mount. Feels like a real-time score reveal.  
+**Why:** A static number is forgettable. A number that counts up to you feels earned — every point is explicitly acknowledged. Identical psychology to slot machines showing a "win."
+
+### 19. Animated Progress Bar (Points Screen)
+**File:** `app/(tabs)/points.tsx` → `ProgressBar` component  
+**What:** The tier progress bar fills from 0% to the real percentage using `withTiming(percent, { duration: 900 })` on a Reanimated shared value. Width is an animated style value.  
+**Why:** A static bar tells you where you are. An animating bar shows you getting there — micro-progress reinforcement that makes the tier feel achievable.
+
+### 20. Flame Streak Counter (Points Screen)
+**File:** `app/(tabs)/points.tsx` → `FlameStreak` component  
+**What:** A 🔥 icon bobs gently up and down (withRepeat/withSequence, ±3px, 500ms) next to "X day streak" in the hero top row. Field stored as mock (production: consecutive_days from backend).  
+**Why:** Streak counters are the highest-retention mechanic in consumer apps (Duolingo, Snapchat). Introducing the UI now creates the expectation — and backend hook — for real streaks.
+
+### 21. Milestone Celebration Badge (Points Screen)
+**File:** `app/(tabs)/points.tsx`  
+**What:** When `totalPoints` hits a milestone (50, 100, 250, 500, 1000, 5000), a "🎉 Milestone reached! X pts" banner slides up from the bottom of the hero using `FadeInUp.springify()` and disappears after 4 seconds. Fires `Haptics.notificationAsync(Success)`.  
+**Why:** Milestones need to feel special. Without acknowledgement, users don't know they crossed a threshold. The surprise banner + haptic creates a dopamine spike at exactly the right moment.
+
+### 22. "People Helped" Impact Translation (Points Screen)
+**File:** `app/(tabs)/points.tsx` hero  
+**What:** Below the score, a teal pill shows "≈ X people helped" (computed as totalPoints ÷ 10). This is a human-readable translation of the abstract number.  
+**Why:** "150 pts" means nothing. "≈ 15 people helped" is a story. Translating a metric into human impact is the core of KindRide's brand.
+
+### 23. Leaderboard Teaser Card (Points Screen)
+**File:** `app/(tabs)/points.tsx`  
+**What:** A dark purple gradient card teases the upcoming weekly city leaderboard with a "Coming soon" badge. Sets user expectation and creates aspiration before the feature ships.  
+**Why:** Shipping the UI before the backend is ready lets us gauge engagement and creates feature anticipation. Users start asking "when does this unlock?" — which is free retention.
+
+### 24. Past Tier Connector Color (Points Screen)
+**File:** `app/(tabs)/points.tsx` tier ladder  
+**What:** The connector lines between tier rows turn teal (`#0d9488`) for completed tiers and remain light grey for future ones.  
+**Why:** Visual "trail" behind the user reinforces progress. You can see how far you've come — not just how far you have to go.
+
+*Last updated: 2026-04-07 — Session 46*
