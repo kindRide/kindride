@@ -10,6 +10,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 import httpx
 import os
+import threading
 
 try:
     from slowapi import Limiter
@@ -29,6 +30,31 @@ TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
 TWILIO_FROM_PHONE_NUMBER = os.getenv("TWILIO_FROM_PHONE_NUMBER", "").strip()
 TWILIO_AVAILABLE = bool(TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_PHONE_NUMBER)
+
+# ── M6 SOS Spam Protection ────────────────────────────────────────────────────
+# Per-user in-memory cooldown. Prevents a user triggering SOS repeatedly within
+# 60 seconds — stops accidental or malicious SMS spam to emergency contacts.
+# In a multi-process deployment, move this to Redis. Fine for single-process.
+_SOS_COOLDOWN_SECONDS = 60
+_sos_last_trigger: dict[str, datetime] = {}   # user_id -> last trigger time
+_sos_lock = threading.Lock()
+
+
+def _check_and_set_sos_cooldown(user_id: str) -> None:
+    """Raises 429 if the user triggered SOS within the last 60 seconds."""
+    now = datetime.now(timezone.utc)
+    with _sos_lock:
+        last = _sos_last_trigger.get(user_id)
+        if last is not None:
+            elapsed = (now - last).total_seconds()
+            if elapsed < _SOS_COOLDOWN_SECONDS:
+                remaining = int(_SOS_COOLDOWN_SECONDS - elapsed)
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"SOS cooldown active. Please wait {remaining}s before triggering again.",
+                )
+        _sos_last_trigger[user_id] = now
+# ── End M6 ───────────────────────────────────────────────────────────────────
 
 
 class SosLocation(BaseModel):
@@ -59,6 +85,9 @@ def send_sos(
     try:
         _require_config()
         user_id = _verify_user_bearer_token(authorization)
+
+        # M6: enforce per-user 60-second cooldown before any SMS is sent
+        _check_and_set_sos_cooldown(user_id)
 
         logger.warning(
             "SOS ALERT triggered",

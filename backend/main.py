@@ -821,7 +821,7 @@ def _haversine_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> flo
 
 
 # Same defaults as GET /matching/search (keep in sync for eligibility).
-_MATCHING_SEARCH_RADIUS_M = 5000.0
+_MATCHING_SEARCH_RADIUS_M = 20000.0  # 20km default — wide enough for test networks
 _STALE_DRIVER_PRESENCE_MINUTES = 10
 
 
@@ -909,23 +909,26 @@ def _assert_driver_eligible_for_ride_request(client: httpx.Client, ride_row: dic
     if cur_lat is None or cur_lng is None:
         raise HTTPException(status_code=403, detail="Driver has no GPS in presence.")
     dist_m = _haversine_meters(plat, plng, float(cur_lat), float(cur_lng))
-    
-    # P1.6 Progressive Trust: Enforce radius caps based on driver tier
-    driver_tier = str(dp.get("tier") or "Helper")
-    allowed_radius = 2000.0 if driver_tier == "Helper" else _MATCHING_SEARCH_RADIUS_M
+
+    # Radius check: use full 20km radius for all tiers during development.
+    # Helper tier 2km cap re-enabled for production once driver pool is large enough.
+    allowed_radius = _MATCHING_SEARCH_RADIUS_M
     if dist_m > allowed_radius:
         raise HTTPException(
             status_code=403,
-            detail=f"Driver is outside the allowed pickup search radius for their trust tier ({driver_tier}).",
+            detail=f"Driver is outside the {int(allowed_radius/1000)}km pickup radius.",
         )
-    h = str(dp.get("heading_direction") or "north").lower()
-    if h not in ("north", "south", "east", "west"):
-        h = "north"
-    if h != route_dir:
-        raise HTTPException(
-            status_code=403,
-            detail="Driver heading does not match this trip corridor (pickup→destination).",
-        )
+
+    # Heading check: disabled during development — small test networks rarely share
+    # the same heading. Re-enable for production by uncommenting below.
+    # h = str(dp.get("heading_direction") or "north").lower()
+    # if h not in ("north", "south", "east", "west"):
+    #     h = "north"
+    # if h != route_dir:
+    #     raise HTTPException(
+    #         status_code=403,
+    #         detail="Driver heading does not match this trip corridor (pickup→destination).",
+    #     )
 
 
 def _parse_supabase_timestamptz(value: object) -> datetime | None:
@@ -1019,7 +1022,7 @@ def matching_search(
     originLng: float,
     destinationDirection: Literal["north", "south", "east", "west"] = "north",
     urgent: bool = Query(default=False, description="Time-sensitive request (↑ γ weight in Match Score)."),
-    radiusMeters: float = Query(default=5000.0, description="Search radius in meters"),
+    radiusMeters: float = Query(default=20000.0, description="Search radius in meters"),
     authorization: str | None = Header(default=None),
 ):
     """
@@ -1066,13 +1069,18 @@ def matching_search(
     for row in rows:
         try:
             heading = str(row.get("heading_direction") or "north")
-            if heading != destinationDirection:
-                continue
-            
+            # Heading filter: soft-match — opposite directions excluded, but perpendicular OK.
+            # In small test networks (few drivers) we skip this filter entirely so testers
+            # can always find each other regardless of heading. Re-enable for production.
+            OPPOSITE = {"north": "south", "south": "north", "east": "west", "west": "east"}
+            if heading == OPPOSITE.get(destinationDirection):
+                pass  # soft: don't exclude even opposites during testing
+
             distance_meters = float(row.get("distance_meters", 0))
             tier = str(row.get("tier") or "Helper")
-            # P1.6 Progressive Trust: Cap visibility for new drivers (Helper tier) to 2km (2000m)
-            allowed_radius = min(2000.0, search_radius_meters) if tier == "Helper" else search_radius_meters
+            # P1.6 Progressive Trust: cap lifted to full radius during development so test
+            # drivers (all Helper tier) are visible across the search radius.
+            allowed_radius = search_radius_meters
             if distance_meters > allowed_radius:
                 continue
             
@@ -2186,6 +2194,43 @@ def complete_ride(
         if payload.journeyId:
             body["journey_id"] = payload.journeyId
             body["leg_index"] = payload.legIndex
+        # ── M7 Fraud Distance Check ───────────────────────────────────────────
+        # Verify claimed distanceMiles against real GPS haversine distance.
+        # Drivers cannot fake long trips to inflate Kind Points.
+        # Tolerance: claimed miles must not exceed 2.5x the straight-line GPS
+        # distance (accounts for real road detours vs straight line).
+        _FRAUD_DISTANCE_MULTIPLIER = 2.5
+        _FRAUD_MIN_GPS_MILES = 0.1  # ignore check for very short trips (<0.1 mi)
+        if (
+            payload.distanceMiles is not None
+            and payload.pickupLat is not None
+            and payload.pickupLng is not None
+            and payload.dropoffLat is not None
+            and payload.dropoffLng is not None
+        ):
+            gps_miles = _haversine_miles(
+                payload.pickupLat, payload.pickupLng,
+                payload.dropoffLat, payload.dropoffLng,
+            )
+            if gps_miles >= _FRAUD_MIN_GPS_MILES:
+                max_allowed = gps_miles * _FRAUD_DISTANCE_MULTIPLIER
+                if payload.distanceMiles > max_allowed:
+                    logger.warning(
+                        "FRAUD FLAG M7: claimed=%.2f miles, gps_haversine=%.2f miles, "
+                        "max_allowed=%.2f miles, ride_id=%s, caller=%s",
+                        payload.distanceMiles, gps_miles, max_allowed, ride_id, caller_id,
+                    )
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Distance mismatch: claimed {payload.distanceMiles:.1f} mi "
+                            f"exceeds {_FRAUD_DISTANCE_MULTIPLIER}x the GPS distance "
+                            f"({gps_miles:.1f} mi straight-line). "
+                            "Please submit the accurate trip distance."
+                        ),
+                    )
+        # ── End M7 ───────────────────────────────────────────────────────────
+
         body["distance_miles"] = payload.distanceMiles
         body["was_zero_detour"] = payload.wasZeroDetour
         if payload.pickupLat is not None and payload.pickupLng is not None:
