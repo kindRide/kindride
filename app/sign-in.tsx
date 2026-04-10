@@ -11,76 +11,59 @@ import {
   Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Link, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '@/lib/auth';
-
-type Method = 'email' | 'phone';
+import { supabase } from '@/lib/supabase';
+import { hasRecordingConsent } from '@/lib/user-consent';
+import { useTranslation } from 'react-i18next';
 
 export default function SignInScreen() {
-  const [method, setMethod] = useState<Method>('email');
-  const [phone, setPhone] = useState('');
+  const { t } = useTranslation();
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [oauthLoading, setOauthLoading] = useState<'google' | 'apple' | null>(null);
-  const { signInWithOtp, verifyOtp, signInWithEmailOtp, verifyEmailOtp, signInWithOAuth } = useAuth();
+  const { signInWithEmailOtp, verifyEmailOtp } = useAuth();
   const router = useRouter();
-
-  const handleOAuth = async (provider: 'google' | 'apple') => {
-    setOauthLoading(provider);
-    const { error } = await signInWithOAuth(provider);
-    setOauthLoading(null);
-    if (error) {
-      Alert.alert('Sign in failed', error);
-    } else {
-      router.replace('/(tabs)');
-    }
-  };
 
   const handleSendOtp = async () => {
     setLoading(true);
-    if (method === 'phone') {
-      if (!phone.trim()) {
-        Alert.alert('Phone required', 'Please enter your phone number with country code.');
-        setLoading(false);
-        return;
-      }
-      const { error } = await signInWithOtp(phone.trim());
+    if (!email.trim()) {
+      Alert.alert(t('emailRequiredTitle', 'Email required'), t('emailRequiredBody', 'Please enter your email address.'));
       setLoading(false);
-      if (error) { Alert.alert('Could not send code', error); } else { setOtpSent(true); }
-    } else {
-      if (!email.trim()) {
-        Alert.alert('Email required', 'Please enter your email address.');
-        setLoading(false);
-        return;
-      }
-      const { error } = await signInWithEmailOtp(email.trim());
-      setLoading(false);
-      if (error) { Alert.alert('Could not send code', error); } else { setOtpSent(true); }
+      return;
     }
+    const { error } = await signInWithEmailOtp(email.trim(), true);
+    setLoading(false);
+    if (error) { Alert.alert(t('couldNotSendCodeTitle', 'Could not send code'), error); } else { setOtpSent(true); }
   };
 
   const handleVerifyOtp = async () => {
     if (!otp.trim()) {
-      Alert.alert('Code required', 'Please enter the 6-digit code.');
+      Alert.alert(t('codeRequiredTitle', 'Code required'), t('codeRequiredBody', 'Please enter the code from your email.'));
       return;
     }
     setLoading(true);
-    if (method === 'phone') {
-      const { error } = await verifyOtp(phone.trim(), otp.trim());
-      setLoading(false);
-      if (error) { Alert.alert('Verification failed', error); } else { router.replace('/(tabs)'); }
+    const { error } = await verifyEmailOtp(email.trim(), otp.trim());
+    setLoading(false);
+    if (error) {
+      Alert.alert(t('verificationFailedTitle', 'Verification failed'), error);
     } else {
-      const { error } = await verifyEmailOtp(email.trim(), otp.trim());
-      setLoading(false);
-      if (error) { Alert.alert('Verification failed', error); } else { router.replace('/(tabs)'); }
+      const session = await supabase?.auth.getSession();
+      const user = session?.data.session?.user ?? null;
+
+      if (!user) {
+        Alert.alert(t('verificationFailedTitle', 'Verification failed'), t('couldNotLoadSessionBody', 'Could not load your session. Please try again.'));
+        return;
+      }
+
+      const consentGiven = await hasRecordingConsent(user.id);
+      router.replace(consentGiven ? '/(tabs)' : '/complete-signup');
     }
   };
 
   const handleBack = () => { setOtpSent(false); setOtp(''); };
-  const switchMethod = (m: Method) => { setMethod(m); setOtpSent(false); setOtp(''); };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#f8fafc' }} edges={['top']}>
@@ -104,16 +87,16 @@ export default function SignInScreen() {
             </View>
 
             <View style={styles.heroBadge}>
-              <Text style={styles.heroBadgeText}>🌱  Free Humanitarian Rideshare</Text>
+              <Text style={styles.heroBadgeText}>{t('freeHumanitarianRideshare', '🌱  Free Humanitarian Rideshare')}</Text>
             </View>
 
             <Text style={styles.heroHeadline}>
-              {otpSent ? 'Check your\n' + (method === 'phone' ? 'phone' : 'email') : 'Welcome\nback.'}
+              {otpSent ? t('checkYourEmailTitle', 'Check your\nemail') : t('welcomeBackTitle', 'Welcome\nback.')}
             </Text>
             <Text style={styles.heroSubcopy}>
               {otpSent
-                ? `Enter the 6-digit code we sent to ${method === 'phone' ? phone : email}`
-                : 'Sign in to continue making a difference.'}
+                ? t('enterCodeSentToEmail', 'Enter the code we sent to {{email}}', { email })
+                : t('useEmailToSignInOrCreate', 'Use your email to sign in or create your account.')}
             </Text>
           </LinearGradient>
         </View>
@@ -123,58 +106,18 @@ export default function SignInScreen() {
 
           {!otpSent ? (
             <>
-              {/* Method toggle */}
-              <View style={styles.methodRow}>
-                <Pressable
-                  style={[styles.methodBtn, method === 'email' && styles.methodBtnActive]}
-                  onPress={() => switchMethod('email')}
-                >
-                  <Text style={[styles.methodText, method === 'email' && styles.methodTextActive]}>
-                    Email
-                  </Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.methodBtn, method === 'phone' && styles.methodBtnActive]}
-                  onPress={() => switchMethod('phone')}
-                >
-                  <Text style={[styles.methodText, method === 'phone' && styles.methodTextActive]}>
-                    Phone
-                  </Text>
-                </Pressable>
-              </View>
-
-              {method === 'email' ? (
-                <>
-                  <Text style={styles.fieldLabel}>Email address</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="you@example.com"
-                    placeholderTextColor="#94a3b8"
-                    value={email}
-                    onChangeText={setEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    autoComplete="email"
-                  />
-                </>
-              ) : (
-                <>
-                  <Text style={styles.fieldLabel}>Phone number</Text>
-                  <Text style={styles.fieldHint}>Include country code — e.g. +1 for USA</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="+1234567890"
-                    placeholderTextColor="#94a3b8"
-                    value={phone}
-                    onChangeText={setPhone}
-                    keyboardType="phone-pad"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    autoComplete="tel"
-                  />
-                </>
-              )}
+              <Text style={styles.fieldLabel}>{t('emailAddressLabel', 'Email address')}</Text>
+              <TextInput
+                style={styles.input}
+                placeholder={t('emailPlaceholder', 'you@example.com')}
+                placeholderTextColor="#94a3b8"
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="email"
+              />
 
               <Pressable
                 style={[styles.primaryBtn, loading && styles.btnDisabled]}
@@ -183,40 +126,9 @@ export default function SignInScreen() {
               >
                 {loading
                   ? <ActivityIndicator color="#fff" />
-                  : <Text style={styles.primaryBtnText}>Send verification code  →</Text>
+                  : <Text style={styles.primaryBtnText}>{t('continueWithEmail', 'Continue with email  →')}</Text>
                 }
               </Pressable>
-
-              {/* OAuth */}
-              <View style={styles.dividerRow}>
-                <View style={styles.dividerLine} />
-                <Text style={styles.dividerText}>or continue with</Text>
-                <View style={styles.dividerLine} />
-              </View>
-
-              <Pressable
-                style={[styles.oauthBtn, oauthLoading === 'google' && styles.btnDisabled]}
-                onPress={() => handleOAuth('google')}
-                disabled={oauthLoading !== null}
-              >
-                {oauthLoading === 'google'
-                  ? <ActivityIndicator color="#334155" />
-                  : <Text style={styles.oauthBtnText}>🇬  Sign in with Google</Text>
-                }
-              </Pressable>
-
-              {Platform.OS === 'ios' && (
-                <Pressable
-                  style={[styles.oauthBtn, styles.appleBtn, oauthLoading === 'apple' && styles.btnDisabled]}
-                  onPress={() => handleOAuth('apple')}
-                  disabled={oauthLoading !== null}
-                >
-                  {oauthLoading === 'apple'
-                    ? <ActivityIndicator color="#fff" />
-                    : <Text style={[styles.oauthBtnText, styles.appleBtnText]}>  Sign in with Apple</Text>
-                  }
-                </Pressable>
-              )}
             </>
           ) : (
             <>
@@ -224,24 +136,24 @@ export default function SignInScreen() {
               <View style={styles.sentBanner}>
                 <Text style={styles.sentBannerIcon}>📬</Text>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.sentBannerTitle}>Code sent</Text>
+                  <Text style={styles.sentBannerTitle}>{t('codeSentTitle', 'Code sent')}</Text>
                   <Text style={styles.sentBannerBody}>
-                    Check your {method === 'phone' ? 'messages' : 'inbox'} for a 6-digit code from KindRide.
+                    {t('checkInboxForKindRideCode', 'Check your inbox for the code from KindRide.')}
                   </Text>
                 </View>
               </View>
 
-              <Text style={styles.fieldLabel}>6-digit code</Text>
+              <Text style={styles.fieldLabel}>{t('emailCodeLabel', 'Email code')}</Text>
               <TextInput
                 style={[styles.input, styles.otpInput]}
-                placeholder="000000"
+                placeholder={t('enterCodePlaceholder', 'Enter code')}
                 placeholderTextColor="#94a3b8"
                 value={otp}
                 onChangeText={setOtp}
                 keyboardType="number-pad"
                 autoCapitalize="none"
                 autoCorrect={false}
-                maxLength={6}
+                maxLength={10}
                 autoFocus
               />
 
@@ -252,29 +164,27 @@ export default function SignInScreen() {
               >
                 {loading
                   ? <ActivityIndicator color="#fff" />
-                  : <Text style={styles.primaryBtnText}>Sign in</Text>
+                  : <Text style={styles.primaryBtnText}>{t('continue', 'Continue')}</Text>
                 }
               </Pressable>
 
               <Pressable style={styles.backBtn} onPress={handleBack}>
-                <Text style={styles.backBtnText}>← Try a different {method === 'phone' ? 'number' : 'email'}</Text>
+                <Text style={styles.backBtnText}>{t('tryDifferentEmail', '← Try a different email')}</Text>
               </Pressable>
             </>
           )}
 
           <View style={styles.divider} />
-
-          {/* Sign-up CTA — prominent, not a tiny link */}
-          <View style={styles.signUpRow}>
-            <Text style={styles.signUpPrompt}>New to KindRide?</Text>
-            <Link href="/sign-up">
-              <Text style={styles.signUpLink}>Create an account  →</Text>
-            </Link>
+          <View style={styles.helperBox}>
+            <Text style={styles.helperTitle}>{t('oneEmailFlowTitle', 'One email flow')}</Text>
+            <Text style={styles.helperBody}>
+              {t('oneEmailFlowBody', 'If your email is new, we\'ll help you finish setup after verification. If you already have an account, you\'ll go straight in.')}
+            </Text>
           </View>
         </View>
 
         <Text style={styles.terms}>
-          By signing in you agree to our Terms of Service and Privacy Policy.
+          {t('signInTermsNotice', 'By signing in you agree to our Terms of Service and Privacy Policy.')}
         </Text>
       </ScrollView>
     </SafeAreaView>
@@ -413,9 +323,13 @@ const styles = StyleSheet.create({
 
   divider: { height: 1, backgroundColor: '#f1f5f9', marginVertical: 18 },
 
-  signUpRow: { alignItems: 'center', gap: 6 },
-  signUpPrompt: { fontSize: 13, color: '#64748b' },
-  signUpLink: { fontSize: 15, fontWeight: '700', color: '#0d9488' },
+  helperBox: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 14,
+    padding: 14,
+  },
+  helperTitle: { fontSize: 14, fontWeight: '700', color: '#0f172a', marginBottom: 4 },
+  helperBody: { fontSize: 13, color: '#64748b', lineHeight: 19 },
 
   terms: {
     fontSize: 12,

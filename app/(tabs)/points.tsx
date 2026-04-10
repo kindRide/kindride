@@ -1,9 +1,10 @@
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Platform,
   Pressable,
   ScrollView,
@@ -16,6 +17,7 @@ import Reanimated, {
   FadeInUp,
   useAnimatedStyle,
   useSharedValue,
+  withDelay,
   withRepeat,
   withSequence,
   withSpring,
@@ -35,11 +37,11 @@ type EventItem = {
 
 // Tier progression ladder
 const TIERS = [
-  { name: "Helper",         min: 0,   color: "#64748b", icon: "🤝" },
-  { name: "Supporter",      min: 50,  color: "#0d9488", icon: "⭐" },
-  { name: "Good Samaritan", min: 100, color: "#2563eb", icon: "🌟" },
-  { name: "Guardian",       min: 250, color: "#7c3aed", icon: "🛡️" },
-  { name: "Champion",       min: 500, color: "#d97706", icon: "🏆" },
+  { key: "helper",         min: 0,   color: "#64748b", icon: "🤝" },
+  { key: "supporter",      min: 50,  color: "#0d9488", icon: "⭐" },
+  { key: "goodSamaritan",  min: 100, color: "#2563eb", icon: "🌟" },
+  { key: "guardian",       min: 250, color: "#7c3aed", icon: "🛡️" },
+  { key: "champion",       min: 500, color: "#d97706", icon: "🏆" },
 ];
 
 // Milestone thresholds for celebration badge
@@ -47,9 +49,9 @@ const MILESTONES = [50, 100, 250, 500, 1000, 5000];
 
 // Redemption options
 const REDEMPTIONS = [
-  { icon: "🎁", title: "Donate to Shelter",    desc: "Give 25 pts to a local shelter",  cost: 25,  color: "#f0fdf4", border: "#86efac" },
-  { icon: "🏅", title: "Unlock badge",          desc: "Display your champion status",    cost: 50,  color: "#eff6ff", border: "#93c5fd" },
-  { icon: "📣", title: "Community shoutout",    desc: "Featured in the KindRide feed",   cost: 100, color: "#fdf4ff", border: "#d8b4fe" },
+  { icon: "🎁", titleKey: "donateToShelter", descKey: "donateToShelterDesc", cost: 25,  color: "#f0fdf4", border: "#86efac" },
+  { icon: "🏅", titleKey: "unlockBadge", descKey: "unlockBadgeDesc", cost: 50,  color: "#eff6ff", border: "#93c5fd" },
+  { icon: "📣", titleKey: "communityShoutout", descKey: "communityShoutoutDesc", cost: 100, color: "#fdf4ff", border: "#d8b4fe" },
 ];
 
 // ── Animated count-up score display ──────────────────────────────────────────
@@ -137,9 +139,70 @@ const flameStyles = StyleSheet.create({
   text: { fontSize: 13, fontWeight: "700", color: "rgba(255,255,255,0.85)" },
 });
 
+// ── Confetti burst (animated falling particles on milestone) ─────────────────
+const CONFETTI_COLORS = ["#f59e0b", "#2563eb", "#10b981", "#ec4899", "#8b5cf6", "#f97316"];
+function ConfettiParticle({ index }: { index: number }) {
+  const x = useSharedValue((index % 7) * 50 - 50);
+  const y = useSharedValue(-20);
+  const rotate = useSharedValue(0);
+  const opacity = useSharedValue(1);
+
+  useEffect(() => {
+    const delay = index * 60;
+    x.value = withDelay(delay, withTiming(x.value + (Math.random() * 80 - 40), { duration: 1400 }));
+    y.value = withDelay(delay, withTiming(340, { duration: 1400 }));
+    rotate.value = withDelay(delay, withRepeat(withTiming(360, { duration: 600 }), 3));
+    opacity.value = withDelay(delay + 900, withTiming(0, { duration: 500 }));
+  }, []);
+
+  const style = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: x.value },
+      { translateY: y.value },
+      { rotate: `${rotate.value}deg` },
+    ],
+    opacity: opacity.value,
+    backgroundColor: CONFETTI_COLORS[index % CONFETTI_COLORS.length],
+  }));
+
+  return <Reanimated.View style={[confettiStyles.particle, style]} />;
+}
+
+function ConfettiBurst({ visible }: { visible: boolean }) {
+  if (!visible) return null;
+  return (
+    <View style={confettiStyles.container} pointerEvents="none">
+      {Array.from({ length: 18 }).map((_, i) => (
+        <ConfettiParticle key={i} index={i} />
+      ))}
+    </View>
+  );
+}
+
+const confettiStyles = StyleSheet.create({
+  container: {
+    position: "absolute", top: 0, left: 0, right: 0, height: 360,
+    zIndex: 99, overflow: "hidden",
+  },
+  particle: {
+    position: "absolute", width: 10, height: 10, borderRadius: 3,
+  },
+});
+
 // ── Main screen ───────────────────────────────────────────────────────────────
 export default function PointsScreen() {
   const { t } = useTranslation();
+  const tierLabel = (key: string) => t(`pointsTier.${key}`);
+  const normalizeTierKey = (value?: string | null) => {
+    switch (value) {
+      case "Helper": return "helper";
+      case "Supporter": return "supporter";
+      case "Good Samaritan": return "goodSamaritan";
+      case "Guardian": return "guardian";
+      case "Champion": return "champion";
+      default: return null;
+    }
+  };
   const router = useRouter();
   const params = useLocalSearchParams<{
     earned?: string;
@@ -161,6 +224,7 @@ export default function PointsScreen() {
   // Mock streak — in production this would come from a consecutive_days field
   const [streak] = useState(3);
   const [showMilestoneBadge, setShowMilestoneBadge] = useState(false);
+  const [showConfetti, setShowConfetti] = useState(false);
 
   // ── Auth
   useEffect(() => {
@@ -177,6 +241,9 @@ export default function PointsScreen() {
   // ── Points data
   const { totalPoints, tier: currentTier, loading: isLoading, error: pointsError } = useDriverPoints(sessionUserId ?? null);
   const dataSource = sessionUserId && !pointsError ? "supabase" : "local";
+  const currentTierLabel = currentTier
+    ? tierLabel(normalizeTierKey(currentTier) ?? currentTier)
+    : null;
 
   useEffect(() => {
     const loadPoints = async () => {
@@ -206,14 +273,16 @@ export default function PointsScreen() {
       }
     };
     loadPoints();
-  }, [sessionUserId, earnedPoints]);
+  }, [sessionUserId, earnedPoints, t]);
 
-  // ── Milestone check
+  // ── Milestone check + confetti burst
   useEffect(() => {
     if (MILESTONES.includes(totalPoints)) {
       setShowMilestoneBadge(true);
+      setShowConfetti(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setTimeout(() => setShowMilestoneBadge(false), 4000);
+      setTimeout(() => setShowConfetti(false), 2000);
     }
   }, [totalPoints]);
 
@@ -247,6 +316,7 @@ export default function PointsScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
+      <ConfettiBurst visible={showConfetti} />
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: 56 }}
@@ -272,7 +342,7 @@ export default function PointsScreen() {
 
           {/* Badge */}
           <Reanimated.View entering={FadeInDown.delay(80).springify()} style={styles.heroBadge}>
-            <Text style={styles.heroBadgeText}>⭐  Impact Score</Text>
+            <Text style={styles.heroBadgeText}>⭐  {t("impactScore")}</Text>
           </Reanimated.View>
 
           {/* Animated count-up score */}
@@ -280,10 +350,10 @@ export default function PointsScreen() {
             <AnimatedScore target={totalPoints} color="#ffffff" />
           </Reanimated.View>
           <Reanimated.View entering={FadeInDown.delay(160).springify()} style={styles.scoreSubRow}>
-            <Text style={styles.heroPointsLabel}>humanitarian points</Text>
+                <Text style={styles.heroPointsLabel}>{t("humanitarianPoints")}</Text>
             {peopleHelped > 0 && (
               <View style={styles.peopleBadge}>
-                <Text style={styles.peopleText}>≈ {peopleHelped} people helped</Text>
+                  <Text style={styles.peopleText}>{t("peopleHelpedApprox", { count: peopleHelped })}</Text>
               </View>
             )}
           </Reanimated.View>
@@ -292,7 +362,7 @@ export default function PointsScreen() {
           <Reanimated.View entering={FadeInDown.delay(200).springify()}>
             <View style={[styles.tierPill, { backgroundColor: activeTier.color + "33" }]}>
               <Text style={styles.tierEmoji}>{activeTier.icon}</Text>
-              <Text style={styles.tierPillText}>{currentTier || activeTier.name}</Text>
+              <Text style={styles.tierPillText}>{currentTierLabel || tierLabel(activeTier.key)}</Text>
             </View>
           </Reanimated.View>
 
@@ -302,18 +372,18 @@ export default function PointsScreen() {
               <>
                 <ProgressBar percent={progressPercent} color="#5eead4" />
                 <Text style={styles.progressText}>
-                  {ptsToNext} pts to {nextTier.name}
+                  {t("pointsToNextTier", { points: ptsToNext, tier: tierLabel(nextTier.key) })}
                 </Text>
               </>
             ) : (
-              <Text style={styles.progressText}>🏆  Maximum tier reached — you're a Champion!</Text>
+              <Text style={styles.progressText}>{t("maximumTierReached")}</Text>
             )}
           </Reanimated.View>
 
           {/* Milestone celebration */}
           {showMilestoneBadge && (
             <Reanimated.View entering={FadeInUp.springify()} style={styles.milestoneBadge}>
-              <Text style={styles.milestoneText}>🎉  Milestone reached! {totalPoints} pts</Text>
+              <Text style={styles.milestoneText}>{t("milestoneReachedPoints", { points: totalPoints })}</Text>
             </Reanimated.View>
           )}
         </LinearGradient>
@@ -325,11 +395,11 @@ export default function PointsScreen() {
           contentContainerStyle={styles.statsScroll}
         >
           {[
-            { value: currentTier || activeTier.name, label: "Current tier",  color: activeTier.color },
-            { value: `+${lastTripReward}`,            label: "Last trip",     color: "#2563eb" },
-            { value: ptsToNext > 0 ? String(ptsToNext) : "MAX", label: "To next tier", color: "#10b981" },
-            { value: String(streak),                  label: "Day streak",    color: "#f59e0b" },
-            { value: String(peopleHelped),             label: "People helped", color: "#8b5cf6" },
+            { value: currentTierLabel || tierLabel(activeTier.key), label: t("currentTier"), color: activeTier.color },
+            { value: `+${lastTripReward}`, label: t("lastTrip"), color: "#2563eb" },
+            { value: ptsToNext > 0 ? String(ptsToNext) : t("max"), label: t("toNextTier"), color: "#10b981" },
+            { value: String(streak), label: t("dayStreak"), color: "#f59e0b" },
+            { value: String(peopleHelped), label: t("peopleHelped"), color: "#8b5cf6" },
           ].map((s) => (
             <Reanimated.View key={s.label} entering={FadeInDown.delay(80).springify()}>
               <View style={[styles.statCard, { borderTopColor: s.color }]}>
@@ -344,13 +414,13 @@ export default function PointsScreen() {
         {!sessionUserId && hasSupabaseEnv && (
           <Reanimated.View entering={FadeInDown.delay(100).springify()} style={styles.signInBanner}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.signInBannerTitle}>Sign in for live points</Text>
+              <Text style={styles.signInBannerTitle}>{t("signInForLivePoints")}</Text>
               <Text style={styles.signInBannerBody}>
-                Your real impact score syncs from the cloud when you're logged in.
+                {t("realImpactScoreSyncs")}
               </Text>
             </View>
             <Pressable style={styles.signInBannerBtn} onPress={() => router.push("/sign-in")}>
-              <Text style={styles.signInBannerBtnText}>Sign in</Text>
+              <Text style={styles.signInBannerBtnText}>{t("signIn")}</Text>
             </Pressable>
           </Reanimated.View>
         )}
@@ -369,7 +439,7 @@ export default function PointsScreen() {
 
         {/* ── Tier progression ladder ──────────────────────────────────────────── */}
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Tier Progression</Text>
+          <Text style={styles.sectionTitle}>{t("tierProgression")}</Text>
           <View style={styles.sectionBadgeWrap}>
             <Text style={styles.sectionBadgeText}>{tierIndex + 1} / {TIERS.length}</Text>
           </View>
@@ -380,7 +450,7 @@ export default function PointsScreen() {
             const isActive = i === tierIndex;
             const isPast = i < tierIndex;
             return (
-              <View key={tier.name}>
+              <View key={tier.key}>
                 <View style={styles.tierRow}>
                   <View style={[
                     styles.tierBadge,
@@ -390,14 +460,14 @@ export default function PointsScreen() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.tierRowName, isActive && { color: tier.color, fontWeight: "800" }]}>
-                      {tier.name}
+                      {tierLabel(tier.key)}
                     </Text>
-                    <Text style={styles.tierRowMin}>{tier.min.toLocaleString()}+ pts</Text>
+                    <Text style={styles.tierRowMin}>{t("pointsThreshold", { points: tier.min.toLocaleString() })}</Text>
                   </View>
                   {isPast && <Text style={styles.tierCheck}>✓</Text>}
                   {isActive && (
                     <View style={[styles.tierActivePill, { backgroundColor: tier.color }]}>
-                      <Text style={styles.tierActivePillText}>You're here</Text>
+                       <Text style={styles.tierActivePillText}>{t("youAreHere")}</Text>
                     </View>
                   )}
                 </View>
@@ -417,19 +487,19 @@ export default function PointsScreen() {
           >
             <Text style={styles.leaderboardIcon}>📊</Text>
             <View style={{ flex: 1 }}>
-              <Text style={styles.leaderboardTitle}>Weekly Leaderboard</Text>
-              <Text style={styles.leaderboardSub}>City rankings by kind points — coming soon</Text>
+              <Text style={styles.leaderboardTitle}>{t("weeklyLeaderboard")}</Text>
+              <Text style={styles.leaderboardSub}>{t("cityRankingsComingSoon")}</Text>
             </View>
             <View style={styles.leaderboardComingSoon}>
-              <Text style={styles.leaderboardComingSoonText}>Soon</Text>
+              <Text style={styles.leaderboardComingSoonText}>{t("soon")}</Text>
             </View>
           </LinearGradient>
         </Reanimated.View>
 
         {/* ── Redemption options ───────────────────────────────────────────────── */}
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Redeem Points</Text>
-          <Text style={styles.sectionSub}>Coming soon</Text>
+          <Text style={styles.sectionTitle}>{t("redeemPoints")}</Text>
+          <Text style={styles.sectionSub}>{t("comingSoon")}</Text>
         </View>
 
         <Reanimated.View entering={FadeInDown.delay(200).springify()} style={styles.redemptionGrid}>
@@ -437,7 +507,7 @@ export default function PointsScreen() {
             const canRedeem = totalPoints >= item.cost;
             return (
               <Pressable
-                key={item.title}
+                key={item.titleKey}
                 onPress={() => {
                   if (!canRedeem) {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -452,14 +522,14 @@ export default function PointsScreen() {
                 ]}
               >
                 <Text style={styles.redemptionIcon}>{item.icon}</Text>
-                <Text style={styles.redemptionTitle}>{item.title}</Text>
-                <Text style={styles.redemptionDesc}>{item.desc}</Text>
+                <Text style={styles.redemptionTitle}>{t(`pointsRedemption.${item.titleKey}`)}</Text>
+                <Text style={styles.redemptionDesc}>{t(`pointsRedemption.${item.descKey}`)}</Text>
                 <View style={styles.redemptionCost}>
-                  <Text style={styles.redemptionCostText}>{item.cost} pts</Text>
+                  <Text style={styles.redemptionCostText}>{t("pointsCost", { points: item.cost })}</Text>
                 </View>
                 {!canRedeem && (
                   <Text style={styles.redemptionNeed}>
-                    Need {item.cost - totalPoints} more
+                    {t("needMorePoints", { points: item.cost - totalPoints })}
                   </Text>
                 )}
               </Pressable>
@@ -467,12 +537,54 @@ export default function PointsScreen() {
           })}
         </Reanimated.View>
 
+        {/* ── Pay It Forward ───────────────────────────────────────────────────── */}
+        <Reanimated.View entering={FadeInDown.delay(210).springify()} style={styles.payItForwardCard}>
+          <LinearGradient
+            colors={["#fef3c7", "#fde68a"]}
+            start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+            style={styles.payItForwardGradient}
+          >
+            <Text style={styles.payItForwardIcon}>🎁</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.payItForwardTitle}>{t("payItForward")}</Text>
+              <Text style={styles.payItForwardSub}>{t("payItForwardSub")}</Text>
+            </View>
+          </LinearGradient>
+          <View style={styles.payItForwardActions}>
+            {[50, 100, 200].map((cost) => {
+              const canAfford = totalPoints >= cost;
+              return (
+                <Pressable
+                  key={cost}
+                  style={[styles.payItForwardBtn, !canAfford && styles.payItForwardBtnDisabled]}
+                  onPress={() => {
+                    if (!canAfford) return;
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    Alert.alert(
+                      t("giftRideTitle"),
+                      t("giftRideBody", { points: cost }),
+                      [
+                        { text: t("cancel"), style: "cancel" },
+                        { text: t("giftIt"), onPress: () => Alert.alert(t("comingSoon"), t("payItForwardLaunchesSoon")) },
+                      ]
+                    );
+                  }}
+                >
+                  <Text style={[styles.payItForwardBtnText, !canAfford && styles.payItForwardBtnTextDisabled]}>
+                    {cost} pts
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </Reanimated.View>
+
         {/* ── Point history ────────────────────────────────────────────────────── */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>
             {dataSource === "supabase" ? t("pointHistorySupabase", "Live History") : t("pointHistoryLocal", "History")}
           </Text>
-          <Text style={styles.sectionSub}>Most recent first</Text>
+          <Text style={styles.sectionSub}>{t("mostRecentFirst")}</Text>
         </View>
 
         <Reanimated.View entering={FadeInDown.delay(220).springify()} style={styles.card}>
@@ -480,7 +592,7 @@ export default function PointsScreen() {
             <View style={styles.emptyHistory}>
               <Text style={{ fontSize: 28, marginBottom: 8 }}>📋</Text>
               <Text style={styles.emptyHistoryText}>
-                No activity yet. Complete your first ride to earn points.
+                {t("noActivityYetEarnPoints")}
               </Text>
             </View>
           ) : (
@@ -507,10 +619,10 @@ export default function PointsScreen() {
             end={{ x: 1, y: 0 }}
             style={styles.missionCard}
           >
-            <Text style={styles.missionEyebrow}>Why Points Matter</Text>
-            <Text style={styles.missionHeadline}>Every ride is an act of kindness.</Text>
+            <Text style={styles.missionEyebrow}>{t("whyPointsMatter")}</Text>
+            <Text style={styles.missionHeadline}>{t("everyRideActOfKindness")}</Text>
             <Text style={styles.missionBody}>
-              Points reflect your real impact — each one represents a person helped, a mile driven, and a community strengthened.
+              {t("pointsReflectRealImpact")}
             </Text>
           </LinearGradient>
         </Reanimated.View>
@@ -704,4 +816,19 @@ const styles = StyleSheet.create({
   authLinkPrimary: { color: "#0d9488", fontSize: 14, fontWeight: "700" },
   authLinkDot: { color: "#cbd5e1", fontSize: 14 },
   authLinkMuted: { color: "#94a3b8", fontSize: 14, fontWeight: "500" },
+
+  // ── Pay It Forward
+  payItForwardCard: { marginHorizontal: 16, marginTop: 20, borderRadius: 16, overflow: "hidden", borderWidth: 1, borderColor: "#fcd34d" },
+  payItForwardGradient: { flexDirection: "row", alignItems: "center", gap: 14, padding: 16 },
+  payItForwardIcon: { fontSize: 32 },
+  payItForwardTitle: { fontSize: 15, fontWeight: "800", color: "#78350f", marginBottom: 3 },
+  payItForwardSub: { fontSize: 12, color: "#92400e", lineHeight: 17 },
+  payItForwardActions: { flexDirection: "row", gap: 10, padding: 14, backgroundColor: "#fffbeb" },
+  payItForwardBtn: {
+    flex: 1, paddingVertical: 10, borderRadius: 10,
+    backgroundColor: "#f59e0b", alignItems: "center",
+  },
+  payItForwardBtnDisabled: { backgroundColor: "#fef3c7" },
+  payItForwardBtnText: { fontWeight: "800", fontSize: 13, color: "#ffffff" },
+  payItForwardBtnTextDisabled: { color: "#d97706" },
 });

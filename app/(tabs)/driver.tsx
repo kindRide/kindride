@@ -41,6 +41,7 @@ import {
   getRideStatusUrlOrNull,
 } from "@/lib/backend-api-urls";
 import { savePendingPassengerRating } from "@/lib/driver-pending-passenger-rating";
+import { registerRouteCommitment } from "@/lib/route-commitment";
 import { supabase } from "@/lib/supabase";
 
 const SCREEN_W = Dimensions.get("window").width;
@@ -268,6 +269,8 @@ export default function DriverDashboardScreen() {
   const [isAvailable, setIsAvailable] = useState(false);
   const [intent, setIntent] = useState<"already_going" | "detour">("already_going");
   const [heading, setHeading] = useState<"north" | "south" | "east" | "west">("north");
+  const [headingAutoDetected, setHeadingAutoDetected] = useState(false);
+  const [showAdvancedHeading, setShowAdvancedHeading] = useState(false);
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [displayName, setDisplayName] = useState("Driver");
@@ -332,13 +335,46 @@ export default function DriverDashboardScreen() {
         body: JSON.stringify({ rideId, accept }),
       });
       if (r.ok && accept) {
+        let activeTripParams: Record<string, string> = { rideId };
         const statusUrl = getRideStatusUrlOrNull(rideId);
         if (statusUrl) {
           const sr = await fetch(statusUrl, { headers: { Authorization: `Bearer ${token}` } });
           if (sr.ok) {
-            const sj = (await sr.json()) as { passenger_id?: string | null };
+            const sj = (await sr.json()) as {
+              passenger_id?: string | null;
+              pickup_lat?: number | null;
+              pickup_lng?: number | null;
+              destination_lat?: number | null;
+              destination_lng?: number | null;
+              destination_label?: string | null;
+            };
             if (sj.passenger_id) {
               await savePendingPassengerRating({ rideId, passengerId: String(sj.passenger_id) });
+            }
+            if (
+              typeof sj.pickup_lat === "number" &&
+              typeof sj.pickup_lng === "number" &&
+              typeof sj.destination_lat === "number" &&
+              typeof sj.destination_lng === "number"
+            ) {
+              try {
+                await registerRouteCommitment({
+                  rideId,
+                  pickup: { latitude: sj.pickup_lat, longitude: sj.pickup_lng },
+                  destination: { latitude: sj.destination_lat, longitude: sj.destination_lng },
+                  declaredIntent: intent === "detour" ? "detour" : "zero_detour",
+                });
+              } catch (e) {
+                console.warn("[route-commitment] driver dashboard registration failed", e);
+              }
+              activeTripParams = {
+                rideId,
+                destinationLat: String(sj.destination_lat),
+                destinationLng: String(sj.destination_lng),
+                ...(typeof sj.destination_label === "string" && sj.destination_label
+                  ? { destinationLabel: sj.destination_label }
+                  : {}),
+              };
             }
           }
         }
@@ -348,7 +384,7 @@ export default function DriverDashboardScreen() {
           t("accepted", "Accepted"),
           t("passengerNotifiedRouting", "The passenger has been notified. Routing you to the Active Trip map."),
           [
-            { text: t("startTrip", "Start Trip"), onPress: () => router.push({ pathname: "/active-trip", params: { rideId } }) },
+            { text: t("startTrip", "Start Trip"), onPress: () => router.push({ pathname: "/active-trip", params: activeTripParams }) },
             { text: t("later", "Later") },
           ]
         );
@@ -363,7 +399,7 @@ export default function DriverDashboardScreen() {
     } finally {
       setActingRideId(null);
     }
-  }, [router, t]);
+  }, [intent, router, t]);
 
   // ── Auth listener
   useEffect(() => {
@@ -401,12 +437,26 @@ export default function DriverDashboardScreen() {
           return;
         }
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+
+        // Auto-detect heading from GPS bearing when going available and no manual override
+        let resolvedHeading = overrideHeading || heading;
+        if (available && !overrideHeading && loc.coords.heading != null && loc.coords.heading >= 0) {
+          const deg = loc.coords.heading;
+          const autoDir =
+            deg >= 315 || deg < 45 ? "north" :
+            deg >= 45 && deg < 135 ? "east" :
+            deg >= 135 && deg < 225 ? "south" : "west";
+          resolvedHeading = autoDir;
+          setHeading(autoDir as typeof heading);
+          setHeadingAutoDetected(true);
+        }
+
         const { error } = await supabase.from("driver_presence").upsert({
           driver_id: session.user.id,
           is_available: available,
           current_lat: loc.coords.latitude,
           current_lng: loc.coords.longitude,
-          heading_direction: overrideHeading || heading,
+          heading_direction: resolvedHeading,
           intent: overrideIntent || intent,
           updated_at: new Date().toISOString(),
           display_name: displayName.trim() || "Driver",
@@ -555,12 +605,12 @@ export default function DriverDashboardScreen() {
                 <Text style={styles.logoKind}>Kind</Text>
                 <Text style={styles.logoRide}>Ride</Text>
                 <View style={styles.driverBadge}>
-                  <Text style={styles.driverBadgeText}>DRIVER</Text>
+                  <Text style={styles.driverBadgeText}>{t("driverBadge")}</Text>
                 </View>
               </View>
               {idVerified && (
                 <View style={styles.verifiedPill}>
-                  <Text style={styles.verifiedText}>✓ Verified</Text>
+                  <Text style={styles.verifiedText}>✓ {t("verified")}</Text>
                 </View>
               )}
             </View>
@@ -683,7 +733,7 @@ export default function DriverDashboardScreen() {
                           <Text style={styles.passengerName}>👤  {r.passenger_name}</Text>
                         )}
                         <View style={styles.rideTagsRight}>
-                          {vibe && <VibeBadge vibe={vibe} t={t} />}
+                          {vibe && <VibeBadge vibe={vibe} />}
                           <View style={styles.ptsBadge}>
                             <Text style={styles.ptsBadgeText}>+{pts} pts</Text>
                           </View>
@@ -780,26 +830,84 @@ export default function DriverDashboardScreen() {
                 ))}
               </View>
               <View style={styles.divider} />
-              <Text style={styles.fieldLabel}>{t("heading", "Heading")}</Text>
-              <View style={styles.chipRow}>
-                {(["north", "south", "east", "west"] as const).map((dir) => (
+              <Text style={styles.fieldLabel}>{t("heading", "Which way are you going?")}</Text>
+              <Text style={styles.fieldHint}>
+                {headingAutoDetected
+                  ? `📍 Auto-detected from your GPS — currently heading ${heading.charAt(0).toUpperCase() + heading.slice(1)}`
+                  : t("headingHint", "Tap the arrow that matches your direction of travel")}
+              </Text>
+
+              {/* Compass rose — arrow buttons in a cross layout */}
+              <View style={styles.compassWrap}>
+                {/* North */}
+                <View style={styles.compassRow}>
                   <Pressable
-                    key={dir}
-                    style={[styles.chip, heading === dir && styles.chipActive]}
-                    onPress={() => { setHeading(dir); if (isAvailable) syncPresence(true, dir, undefined); }}
+                    style={[styles.compassBtn, heading === "north" && styles.compassBtnActive]}
+                    onPress={() => { setHeading("north"); setHeadingAutoDetected(false); if (isAvailable) syncPresence(true, "north", undefined); void Haptics.selectionAsync(); }}
                   >
-                    <Text style={[styles.chipText, heading === dir && styles.chipTextActive]}>
-                      {dir.charAt(0).toUpperCase() + dir.slice(1)}
-                    </Text>
+                    <Text style={[styles.compassArrow, heading === "north" && styles.compassArrowActive]}>↑</Text>
+                    <Text style={[styles.compassLabel, heading === "north" && styles.compassLabelActive]}>Fwd</Text>
                   </Pressable>
-                ))}
+                </View>
+                {/* West / East */}
+                <View style={styles.compassRow}>
+                  <Pressable
+                    style={[styles.compassBtn, heading === "west" && styles.compassBtnActive]}
+                    onPress={() => { setHeading("west"); setHeadingAutoDetected(false); if (isAvailable) syncPresence(true, "west", undefined); void Haptics.selectionAsync(); }}
+                  >
+                    <Text style={[styles.compassArrow, heading === "west" && styles.compassArrowActive]}>←</Text>
+                    <Text style={[styles.compassLabel, heading === "west" && styles.compassLabelActive]}>Left</Text>
+                  </Pressable>
+                  <View style={styles.compassCenter}>
+                    <Text style={styles.compassCenterDot}>●</Text>
+                  </View>
+                  <Pressable
+                    style={[styles.compassBtn, heading === "east" && styles.compassBtnActive]}
+                    onPress={() => { setHeading("east"); setHeadingAutoDetected(false); if (isAvailable) syncPresence(true, "east", undefined); void Haptics.selectionAsync(); }}
+                  >
+                    <Text style={[styles.compassArrow, heading === "east" && styles.compassArrowActive]}>→</Text>
+                    <Text style={[styles.compassLabel, heading === "east" && styles.compassLabelActive]}>Right</Text>
+                  </Pressable>
+                </View>
+                {/* South */}
+                <View style={styles.compassRow}>
+                  <Pressable
+                    style={[styles.compassBtn, heading === "south" && styles.compassBtnActive]}
+                    onPress={() => { setHeading("south"); setHeadingAutoDetected(false); if (isAvailable) syncPresence(true, "south", undefined); void Haptics.selectionAsync(); }}
+                  >
+                    <Text style={[styles.compassArrow, heading === "south" && styles.compassArrowActive]}>↓</Text>
+                    <Text style={[styles.compassLabel, heading === "south" && styles.compassLabelActive]}>Back</Text>
+                  </Pressable>
+                </View>
               </View>
+
+              {/* Advanced toggle — N/S/E/W text chips for those who know */}
+              <Pressable onPress={() => setShowAdvancedHeading((v) => !v)} style={styles.advancedToggle}>
+                <Text style={styles.advancedToggleText}>
+                  {showAdvancedHeading ? "▲ Hide compass labels" : "▼ Show N/S/E/W labels"}
+                </Text>
+              </Pressable>
+              {showAdvancedHeading && (
+                <View style={styles.chipRow}>
+                  {(["north", "south", "east", "west"] as const).map((dir) => (
+                    <Pressable
+                      key={dir}
+                      style={[styles.chip, heading === dir && styles.chipActive]}
+                      onPress={() => { setHeading(dir); setHeadingAutoDetected(false); if (isAvailable) syncPresence(true, dir, undefined); }}
+                    >
+                      <Text style={[styles.chipText, heading === dir && styles.chipTextActive]}>
+                        {dir.charAt(0).toUpperCase() + dir.slice(1)}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
             </Reanimated.View>
           )}
 
           {/* ── Community Hub ─────────────────────────────────────────────────── */}
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Community Hub</Text>
+            <Text style={styles.sectionTitle}>{t("communityHub")}</Text>
           </View>
 
           {hubName ? (
@@ -807,7 +915,7 @@ export default function DriverDashboardScreen() {
               <View style={styles.cardRow}>
                 <Text style={{ fontSize: 22 }}>🏛️</Text>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.successLabel}>Hub affiliated</Text>
+                  <Text style={styles.successLabel}>{t("hubAffiliated")}</Text>
                   <Text style={styles.successValue}>{hubName}</Text>
                 </View>
               </View>
@@ -1142,6 +1250,23 @@ const styles = StyleSheet.create({
     backgroundColor: "#f8fafc", color: "#1e293b", fontSize: 14,
   },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
+  // Compass rose
+  compassWrap: { alignItems: "center", marginTop: 12, marginBottom: 4, gap: 4 },
+  compassRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 12 },
+  compassBtn: {
+    width: 72, height: 72, borderRadius: 16,
+    borderWidth: 1.5, borderColor: "#e2e8f0", backgroundColor: "#f8fafc",
+    alignItems: "center", justifyContent: "center", gap: 2,
+  },
+  compassBtnActive: { backgroundColor: "#0d9488", borderColor: "#0d9488" },
+  compassArrow: { fontSize: 26, color: "#64748b" },
+  compassArrowActive: { color: "#ffffff" },
+  compassLabel: { fontSize: 10, fontWeight: "600", color: "#94a3b8" },
+  compassLabelActive: { color: "#ccfbf1" },
+  compassCenter: { width: 72, height: 72, alignItems: "center", justifyContent: "center" },
+  compassCenterDot: { fontSize: 10, color: "#cbd5e1" },
+  advancedToggle: { alignSelf: "center", marginTop: 10, paddingVertical: 4 },
+  advancedToggleText: { fontSize: 12, color: "#94a3b8", fontWeight: "600" },
   chip: {
     paddingVertical: 8, paddingHorizontal: 14,
     borderRadius: 10, borderWidth: 1, borderColor: "#e2e8f0", backgroundColor: "#f8fafc",

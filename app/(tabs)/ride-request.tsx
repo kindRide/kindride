@@ -1,5 +1,5 @@
 import { useFocusEffect } from "@react-navigation/native";
-import { Link, useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as Location from "expo-location";
@@ -277,8 +277,10 @@ export default function RideRequestScreen() {
             );
           } else if (!isBackground) {
             setMatchingFeedError(
-              `Live search failed (status ${response.status}). ` +
-                (detail || "Check backend server.")
+              t("liveSearchFailedStatusDetail", {
+                status: response.status,
+                detail: detail || t("checkBackendServer"),
+              })
             );
           }
           if (isBackground) {
@@ -309,31 +311,34 @@ export default function RideRequestScreen() {
         if (isManual) {
           if (parsed.length === 0 && usedLiveSearch) {
             setManualRefreshHint(
-              `Updated ${timestamp} — still no drivers heading ${destinationDirection} within range (or stale presence).`
+              t("updatedStillNoDriversHeading", {
+                timestamp,
+                direction: destinationDirection,
+              })
             );
           } else {
-            setManualRefreshHint(`Updated ${timestamp} — ${parsed.length} driver(s).`);
+            setManualRefreshHint(t("updatedDriverCount", { timestamp, count: parsed.length }));
           }
         }
         if (isBackground) {
           if (parsed.length > 0) {
-            setBackgroundPollNote(`Found ${parsed.length} driver(s) at ${timestamp}.`);
+            setBackgroundPollNote(t("foundDriversAtTime", { count: parsed.length, timestamp }));
           } else if (usedLiveSearch) {
-            setBackgroundPollNote(`Still no match — last checked ${timestamp}. Keeping watch…`);
+            setBackgroundPollNote(t("stillNoMatchLastChecked", { timestamp }));
           } else {
-            setBackgroundPollNote(`Checked ${timestamp} — demo list empty.`);
+            setBackgroundPollNote(t("checkedDemoListEmptyAt", { timestamp }));
           }
         }
       } catch (e) {
         if (signal?.aborted || (e instanceof Error && e.name === "AbortError")) return;
         setMatchingFeed("fallback");
         if (!isBackground) {
-          setMatchingFeedError(e instanceof Error ? e.message : "Network error during search.");
+          setMatchingFeedError(e instanceof Error ? e.message : t("networkErrorDuringSearch"));
         } else if (isManual) {
-          setManualRefreshHint(e instanceof Error ? e.message : "Network error during search.");
+          setManualRefreshHint(e instanceof Error ? e.message : t("networkErrorDuringSearch"));
         }
         if (isBackground) {
-          setBackgroundPollNote("Network hiccup — will retry.");
+          setBackgroundPollNote(t("networkHiccupRetry"));
         }
       } finally {
         if (!isBackground) {
@@ -451,14 +456,14 @@ export default function RideRequestScreen() {
       if (elapsedMs >= 15 * 60_000 && !backgroundAutoPaused) {
         setBackgroundAutoPaused(true);
         setBackgroundPollNote(
-          'We’ve been searching for 15 minutes. Consider adjusting your destination, allowing a multi-leg handoff, or try again later.'
+          t("longWaitBackgroundNote")
         );
         Alert.alert(
-          t("longWaitTitle", "Long wait time"),
-          t("longWaitBody", "We've been searching for 15 minutes. Consider adjusting your destination or enabling multi-leg handoffs to increase your chances of finding a ride."),
+          t("longWaitTitle"),
+          t("longWaitBody"),
           [
-            { text: t("adjustDestination", "Adjust Destination"), onPress: () => router.push("/destination-picker") },
-            { text: t("keepWaiting", "Keep Waiting"), style: "cancel" }
+            { text: t("adjustDestination"), onPress: () => router.push("/destination-picker") },
+            { text: t("keepWaiting"), style: "cancel" }
           ]
         );
         return;
@@ -467,15 +472,15 @@ export default function RideRequestScreen() {
       if (elapsedMs >= 5 * 60_000 && !widenedNotifiedRef.current) {
         widenedNotifiedRef.current = true;
         Alert.alert(
-          t("searchExpandedTitle", "Search expanded"),
-          t("searchExpandedBody", "We haven't found a match nearby yet, so we've automatically expanded the search radius to 15km.")
+          t("searchExpandedTitle"),
+          t("searchExpandedBody")
         );
       }
 
       if (elapsedMs >= BACKGROUND_POLL_MAX_SESSION_MS) {
         setBackgroundAutoPaused(true);
         setBackgroundPollNote(
-          'We paused automatic checks to save battery after a longer stretch on this screen. Tap "Search again now" anytime to look for drivers.'
+          t("backgroundChecksPausedLongStretch")
         );
         return;
       }
@@ -775,12 +780,12 @@ export default function RideRequestScreen() {
           <View style={styles.badgeRow}>
             {item.isFoundingDriver ? (
               <View style={styles.foundingBadge}>
-                <Text style={styles.foundingBadgeText}>⭐ Founding Driver</Text>
+                <Text style={styles.foundingBadgeText}>⭐ {t("foundingDriver")}</Text>
               </View>
             ) : null}
             {item.idVerified ? (
               <View style={styles.verifiedBadge}>
-                <Text style={styles.verifiedBadgeText}>✓ Verified</Text>
+                <Text style={styles.verifiedBadgeText}>✓ {t("verified")}</Text>
               </View>
             ) : null}
           </View>
@@ -863,9 +868,7 @@ export default function RideRequestScreen() {
               const shouldAsk = !alreadyConsented || shouldRandomlyReaskConsent();
               if (shouldAsk) {
                 const message =
-                  "We can’t find a full A→B driver right now.\n\n" +
-                  "As a last resort, we can break your trip into multiple legs and keep searching for the next driver while you ride with Driver A.\n\n" +
-                  "Do you want to allow multi‑leg handoffs when needed?";
+                  t("multiLegConsentMessage");
                 const allow = await new Promise<boolean>((resolve) => {
                   Alert.alert(t("multiLegHandoffTitle"), message, [
                     { text: t("no"), style: "cancel", onPress: () => resolve(false) },
@@ -1087,7 +1090,7 @@ export default function RideRequestScreen() {
               {listRefreshing ? (
                 <ActivityIndicator color="#ffffff" />
               ) : (
-                <Text style={styles.emptyRefreshBtnText}>Search again now</Text>
+                <Text style={styles.emptyRefreshBtnText}>{t("searchAgainNow")}</Text>
               )}
             </TouchableOpacity>
           ) : null}
@@ -1131,7 +1134,7 @@ export default function RideRequestScreen() {
           router.replace("/(tabs)");
         }}
       >
-        <Text style={styles.cancelLink}>Cancel and go back</Text>
+        <Text style={styles.cancelLink}>{t("cancelAndGoBack")}</Text>
       </Pressable>
     </View>
   );

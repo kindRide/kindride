@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Dimensions,
   FlatList,
@@ -47,6 +48,7 @@ export const ONBOARDING_SEEN_KEY = "kindride_onboarding_seen";
 
 export default function OnboardingScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
   const [activeIndex, setActiveIndex] = useState(0);
   const listRef = useRef<FlatList>(null);
 
@@ -112,14 +114,14 @@ export default function OnboardingScreen() {
               {/* Eyebrow */}
               <View style={styles.eyebrowRow}>
                 <View style={[styles.eyebrowDot, { backgroundColor: item.accent }]} />
-                <Text style={styles.eyebrow}>{item.eyebrow}</Text>
+                <Text style={styles.eyebrow}>{t(`onboarding.${item.key}.eyebrow`)}</Text>
               </View>
 
               {/* Headline */}
-              <Text style={styles.title}>{item.title}</Text>
+              <Text style={styles.title}>{t(`onboarding.${item.key}.title`)}</Text>
 
               {/* Body */}
-              <Text style={styles.body}>{item.body}</Text>
+              <Text style={styles.body}>{t(`onboarding.${item.key}.body`)}</Text>
             </View>
           )}
         />
@@ -147,17 +149,17 @@ export default function OnboardingScreen() {
             onPress={next}
           >
             <Text style={styles.primaryBtnText}>
-              {isLast ? "Get Started  →" : "Next"}
+              {isLast ? `${t("onboardingGetStarted")}  →` : t("next")}
             </Text>
           </Pressable>
 
           {isLast ? (
             <Pressable style={styles.secondaryBtn} onPress={finish}>
-              <Text style={styles.secondaryBtnText}>Already have an account?  Sign in</Text>
+              <Text style={styles.secondaryBtnText}>{t("onboardingAlreadyHaveAccount")}</Text>
             </Pressable>
           ) : (
             <Pressable style={styles.skipBtn} onPress={() => void finish()}>
-              <Text style={styles.skipText}>Skip</Text>
+              <Text style={styles.skipText}>{t("skip")}</Text>
             </Pressable>
           )}
         </View>

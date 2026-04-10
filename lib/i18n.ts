@@ -7,6 +7,14 @@ import en from '../locales/en.json';
 import es from '../locales/es.json';
 import ar from '../locales/ar.json';
 
+const SUPPORTED_LANGS = ['en', 'es'] as const;
+
+function resolveInitialLanguage() {
+  const rawLocale = (Localization as any).locale ?? 'en';
+  const baseLocale = String(rawLocale).toLowerCase().split(/[-_]/)[0];
+  return SUPPORTED_LANGS.includes(baseLocale as (typeof SUPPORTED_LANGS)[number]) ? baseLocale : 'en';
+}
+
 const resources = {
   en: { translation: en },
   es: { translation: es },
@@ -17,7 +25,7 @@ i18n
   .use(initReactI18next)
   .init({
     resources,
-    lng: (Localization as any).locale ?? 'en', // Use device locale when available
+    lng: resolveInitialLanguage(),
     fallbackLng: 'en',
     interpolation: {
       escapeValue: false, // React already escapes values

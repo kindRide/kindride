@@ -11,6 +11,7 @@ import {
   RefreshControl
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
 
 type SosRequest = {
@@ -25,6 +26,7 @@ type SosRequest = {
 };
 
 export default function AdminScreen() {
+  const { t } = useTranslation();
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -124,10 +126,10 @@ export default function AdminScreen() {
   if (isAdmin === false) {
     return (
       <View style={styles.center}>
-        <Text style={styles.errorTitle}>Access Denied</Text>
-        <Text style={styles.errorBody}>You do not have administrator privileges.</Text>
+        <Text style={styles.errorTitle}>{t("accessDenied")}</Text>
+        <Text style={styles.errorBody}>{t("adminPrivilegesRequired")}</Text>
         <Pressable style={styles.backBtn} onPress={() => router.back()}>
-          <Text style={styles.backBtnText}>Go Back</Text>
+          <Text style={styles.backBtnText}>{t("goBack")}</Text>
         </Pressable>
       </View>
     );
@@ -147,26 +149,26 @@ export default function AdminScreen() {
           </View>
         </View>
         
-        <Text style={styles.messageText}>{item.message || 'No message provided.'}</Text>
+        <Text style={styles.messageText}>{item.message || t("noMessageProvided")}</Text>
         
         {item.location ? (
           <Text style={styles.locationText}>
-            Location: {item.location.latitude.toFixed(5)}, {item.location.longitude.toFixed(5)}
+            {t("locationLabel")}: {item.location.latitude.toFixed(5)}, {item.location.longitude.toFixed(5)}
           </Text>
         ) : (
-          <Text style={styles.locationText}>Location unavailable</Text>
+          <Text style={styles.locationText}>{t("locationUnavailable")}</Text>
         )}
-        <Text style={styles.userText}>User ID: {item.user_id}</Text>
+        <Text style={styles.userText}>{t("userIdColon")} {item.user_id}</Text>
 
         <View style={styles.actionRow}>
           {isInitial && (
             <Pressable style={[styles.actionBtn, styles.btnAck]} onPress={() => updateSosStatus(item.id, 'acknowledged')}>
-              <Text style={styles.actionBtnText}>Acknowledge</Text>
+              <Text style={styles.actionBtnText}>{t("acknowledge")}</Text>
             </Pressable>
           )}
           {(isInitial || isAck) && (
             <Pressable style={[styles.actionBtn, styles.btnResolve]} onPress={() => updateSosStatus(item.id, 'resolved')}>
-              <Text style={styles.actionBtnText}>Mark Resolved</Text>
+              <Text style={styles.actionBtnText}>{t("markResolved")}</Text>
             </Pressable>
           )}
         </View>
@@ -178,13 +180,13 @@ export default function AdminScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.closeBtn}>
-          <Text style={styles.closeBtnText}>Close</Text>
+          <Text style={styles.closeBtnText}>{t("close")}</Text>
         </Pressable>
-        <Text style={styles.title}>Admin & Moderation</Text>
+        <Text style={styles.title}>{t("adminModeration")}</Text>
         <View style={{ width: 50 }} />
       </View>
       
-      <Text style={styles.sectionTitle}>SOS Requests Queue</Text>
+      <Text style={styles.sectionTitle}>{t("sosRequestsQueue")}</Text>
       
       <FlatList
         data={sosList}
@@ -193,7 +195,7 @@ export default function AdminScreen() {
         contentContainerStyle={styles.list}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         ListEmptyComponent={
-          <Text style={styles.emptyText}>No SOS requests found.</Text>
+          <Text style={styles.emptyText}>{t("noSosRequestsFound")}</Text>
         }
       />
     </SafeAreaView>

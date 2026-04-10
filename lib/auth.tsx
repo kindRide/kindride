@@ -15,7 +15,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<{ error?: string }>;
   signInWithOtp: (phone: string) => Promise<{ error?: string }>;
   verifyOtp: (phone: string, token: string) => Promise<{ data?: { session: Session | null } | null; error?: string }>;
-  signInWithEmailOtp: (email: string) => Promise<{ error?: string }>;
+  signInWithEmailOtp: (email: string, shouldCreateUser?: boolean) => Promise<{ error?: string }>;
   verifyEmailOtp: (email: string, token: string) => Promise<{ data?: { session: Session | null } | null; error?: string }>;
   signInWithOAuth: (provider: 'google' | 'apple') => Promise<{ error?: string }>;
   signUp: (email: string, password: string) => Promise<{ error?: string }>;
@@ -219,17 +219,24 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const signInWithEmailOtp = async (email: string) => {
+  const signInWithEmailOtp = async (email: string, shouldCreateUser = false) => {
     if (!supabase) return { error: 'Service unavailable. Please try again later.' };
 
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email,
-        options: { shouldCreateUser: true },
+        options: { shouldCreateUser },
       });
       if (error) {
         if (error.message.includes('Too many requests') || error.message.includes('rate limit')) {
           return { error: 'Too many attempts. Please wait a few minutes and try again.' };
+        }
+        if (
+          error.message.includes('user not found') ||
+          error.message.includes('User not found') ||
+          error.message.includes('only be accessed via social login')
+        ) {
+          return { error: shouldCreateUser ? 'Could not create account for this email.' : 'No account exists for this email yet. Please sign up first.' };
         }
         return { error: 'Failed to send OTP. Please check your email address and try again.' };
       }

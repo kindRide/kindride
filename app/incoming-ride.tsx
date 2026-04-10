@@ -19,6 +19,7 @@ import {
 } from "@/lib/backend-api-urls";
 import { formatBackendErrorBody } from "@/lib/backend-error";
 import { savePendingPassengerRating } from "@/lib/driver-pending-passenger-rating";
+import { registerRouteCommitment } from "@/lib/route-commitment";
 import { supabase } from "@/lib/supabase";
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -97,7 +98,7 @@ export default function IncomingRideScreen() {
       setFetchError(formatBackendErrorBody(text, r.status));
       return;
     }
-  }, [rideId]);
+  }, [rideId, t]);
 
   useEffect(() => {
     if (!rideId) {
@@ -147,11 +148,59 @@ export default function IncomingRideScreen() {
         if (statusUrl) {
           const sr = await fetch(statusUrl, { headers: { Authorization: `Bearer ${token}` } });
           if (sr.ok) {
-            const sj = (await sr.json()) as { passenger_id?: string | null };
+            const sj = (await sr.json()) as {
+              passenger_id?: string | null;
+              pickup_lat?: number | null;
+              pickup_lng?: number | null;
+              destination_lat?: number | null;
+              destination_lng?: number | null;
+              destination_label?: string | null;
+            };
             const pid = sj.passenger_id;
             if (pid) {
               await savePendingPassengerRating({ rideId, passengerId: String(pid) });
             }
+            const currentDriverId = data.session?.user?.id;
+            if (
+              currentDriverId &&
+              typeof sj.pickup_lat === "number" &&
+              typeof sj.pickup_lng === "number" &&
+              typeof sj.destination_lat === "number" &&
+              typeof sj.destination_lng === "number"
+            ) {
+              const { data: presence } = await supabase
+                .from("driver_presence")
+                .select("intent")
+                .eq("driver_id", currentDriverId)
+                .single();
+              try {
+                await registerRouteCommitment({
+                  rideId,
+                  pickup: { latitude: sj.pickup_lat, longitude: sj.pickup_lng },
+                  destination: { latitude: sj.destination_lat, longitude: sj.destination_lng },
+                  declaredIntent: presence?.intent === "detour" ? "detour" : "zero_detour",
+                });
+              } catch (e) {
+                console.warn("[route-commitment] incoming-ride registration failed", e);
+              }
+            }
+            await refresh();
+            router.replace({
+              pathname: "/active-trip",
+              params: {
+                rideId,
+                ...(typeof sj.destination_label === "string" && sj.destination_label
+                  ? { destinationLabel: sj.destination_label }
+                  : {}),
+                ...(typeof sj.destination_lat === "number"
+                  ? { destinationLat: String(sj.destination_lat) }
+                  : {}),
+                ...(typeof sj.destination_lng === "number"
+                  ? { destinationLng: String(sj.destination_lng) }
+                  : {}),
+              },
+            });
+            return;
           }
         }
       }

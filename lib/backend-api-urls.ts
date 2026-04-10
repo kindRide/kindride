@@ -109,6 +109,16 @@ export function getRidesRespondUrlOrNull(): string | null {
   return b ? `${b}/rides/respond` : null;
 }
 
+export function getRouteCommitmentsRegisterUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/route-commitments/register` : null;
+}
+
+export function getRouteCommitmentsAttestUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/route-commitments/attest` : null;
+}
+
 export function getRideStatusUrlOrNull(rideId: string): string | null {
   const b = getBackendBaseUrlOrNull();
   return b ? `${b}/rides/status/${encodeURIComponent(rideId)}` : null;

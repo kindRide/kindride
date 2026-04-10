@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   View,
   Text,
@@ -17,10 +18,11 @@ export default function ResetPasswordScreen() {
   const [sent, setSent] = useState(false);
   const { resetPassword } = useAuth();
   const router = useRouter();
+  const { t } = useTranslation();
 
   const handleResetPassword = async () => {
     if (!email) {
-      Alert.alert("Error", "Please enter your email address");
+      Alert.alert(t("error"), t("pleaseEnterEmailAddress"));
       return;
     }
 
@@ -29,7 +31,7 @@ export default function ResetPasswordScreen() {
     setLoading(false);
 
     if (error) {
-      Alert.alert("Reset Failed", error);
+      Alert.alert(t("resetFailed"), error);
     } else {
       setSent(true);
     }
@@ -38,11 +40,11 @@ export default function ResetPasswordScreen() {
   if (sent) {
     return (
       <View style={styles.container}>
-        <Text style={styles.title}>Check your email</Text>
-        <Text style={styles.subtitle}>We sent a password reset link to {email}</Text>
+        <Text style={styles.title}>{t("checkYourEmail")}</Text>
+        <Text style={styles.subtitle}>{t("passwordResetSentTo", { email })}</Text>
 
         <Pressable style={styles.button} onPress={() => router.replace("/sign-in")}>
-          <Text style={styles.buttonText}>Back to Sign In</Text>
+          <Text style={styles.buttonText}>{t("backToSignIn")}</Text>
         </Pressable>
       </View>
     );
@@ -50,13 +52,13 @@ export default function ResetPasswordScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Reset Password</Text>
-      <Text style={styles.subtitle}>Enter your email to receive a reset link</Text>
+      <Text style={styles.title}>{t("resetPasswordTitle")}</Text>
+      <Text style={styles.subtitle}>{t("enterEmailResetLink")}</Text>
 
       <View style={styles.form}>
         <TextInput
           style={styles.input}
-          placeholder="Email"
+          placeholder={t("email")}
           value={email}
           onChangeText={setEmail}
           keyboardType="email-address"
@@ -72,12 +74,12 @@ export default function ResetPasswordScreen() {
           {loading ? (
             <ActivityIndicator color="white" />
           ) : (
-            <Text style={styles.buttonText}>Send Reset Link</Text>
+            <Text style={styles.buttonText}>{t("sendResetLink")}</Text>
           )}
         </Pressable>
 
         <Link href="/sign-in" style={styles.link}>
-          <Text style={styles.linkText}>Back to Sign In</Text>
+          <Text style={styles.linkText}>{t("backToSignIn")}</Text>
         </Link>
       </View>
     </View>

@@ -19,9 +19,9 @@ export default function IncomingRideScanScreen() {
   if (!permission.granted) {
     return (
       <View style={styles.container}>
-        <Text style={styles.message}>We need your permission to show the camera to scan the QR code.</Text>
+        <Text style={styles.message}>{t("cameraPermissionNeededForQr")}</Text>
         <Pressable style={styles.button} onPress={requestPermission}>
-          <Text style={styles.buttonText}>Grant Permission</Text>
+          <Text style={styles.buttonText}>{t("grantPermission")}</Text>
         </Pressable>
         <Pressable style={[styles.button, styles.secondaryButton]} onPress={() => router.back()}>
           <Text style={styles.secondaryButtonText}>{t("goBack", "Go back")}</Text>
@@ -44,9 +44,9 @@ export default function IncomingRideScanScreen() {
       router.replace({ pathname: "/incoming-ride", params: { rideId } });
     } else {
       Alert.alert(
-        "Invalid QR Code",
-        "This QR code does not contain a valid KindRide ride ID.",
-        [{ text: "Try Again", onPress: () => setScanned(false) }]
+        t("invalidQrCode"),
+        t("invalidKindrideRideQr"),
+        [{ text: t("tryAgain"), onPress: () => setScanned(false) }]
       );
     }
   };

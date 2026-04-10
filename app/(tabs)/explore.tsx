@@ -45,6 +45,7 @@ import Animated, {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 import * as Location from "expo-location";
+import { useTranslation } from "react-i18next";
 
 import { hasSupabaseEnv, supabase } from "@/lib/supabase";
 
@@ -121,6 +122,9 @@ function RouteCard({
 
 // ─── ExploreScreen ────────────────────────────────────────────────────────────
 export default function ExploreScreen() {
+  // Opt out of React Compiler for this component to prevent it from freezing mutable Animated classes
+  "use no memo";
+  const { t } = useTranslation();
   const router   = useRouter();
   const insets   = useSafeAreaInsets();
   const mapRef   = useRef<MapView>(null);
@@ -136,7 +140,7 @@ export default function ExploreScreen() {
   const [recordingConsent, setRecordingConsent] = useState(false);
 
   // ── Drawer (PanResponder + RN Animated — not Reanimated, needs setValue) ────
-  const drawerY = useRef(new RNAnimated.Value(PEEK)).current;
+  const [drawerY] = useState(() => new RNAnimated.Value(PEEK));
   const snapRef = useRef(PEEK);
 
   const snapTo = useCallback((target: number, velocity = 0) => {
@@ -148,9 +152,9 @@ export default function ExploreScreen() {
       friction: 11,
       useNativeDriver: false,
     }).start();
-  }, []);
+  }, [drawerY]);
 
-  const panResponder = useRef(
+  const [panResponder] = useState(() =>
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 6,
       onPanResponderGrant: () => {
@@ -167,7 +171,7 @@ export default function ExploreScreen() {
         else snapTo(PEEK, vel);
       },
     })
-  ).current;
+  );
 
   // ── Safety panel (Reanimated) ─────────────────────────────────────────────
   const safetyX       = useSharedValue(SCREEN_W);
@@ -233,15 +237,15 @@ export default function ExploreScreen() {
     } else if (id === "share") {
       const url = ExpoLinking.createURL("/ride-share", { queryParams: { token: "demo" } });
       await ExpoLinking.openURL(url).catch(() =>
-        Alert.alert("Share trip", "Your live trip link is ready to share.")
+        Alert.alert(t("shareTrip", "Share trip"), t("shareTripReady", "Your live trip link is ready to share."))
       );
     } else if (id === "call") {
-      Alert.alert("Emergency contact", "Call your saved emergency contact?", [
-        { text: "Cancel", style: "cancel" },
-        { text: "Call now", onPress: () => ExpoLinking.openURL("tel:911") },
+      Alert.alert(t("emergencyContact", "Emergency contact"), t("callEmergencyContact", "Call your saved emergency contact?"), [
+        { text: t("cancel", "Cancel"), style: "cancel" },
+        { text: t("callNow", "Call now"), onPress: () => ExpoLinking.openURL("tel:911") },
       ]);
     }
-  }, [router]);
+  }, [router, t]);
 
   const handleCheckin = async (val: boolean) => {
     setSilentCheckin(val);
@@ -320,8 +324,8 @@ export default function ExploreScreen() {
           <View style={styles.hudPill}>
             <Animated.View style={[styles.hudLiveDot, pulseStyle]} />
             <View>
-              <Text style={styles.hudPillTitle}>Explore</Text>
-              <Text style={styles.hudPillSub}>{driversOnline} drivers online</Text>
+          <Text style={styles.hudPillTitle}>{t("explore", "Explore")}</Text>
+          <Text style={styles.hudPillSub}>{driversOnline} {t("driversOnline", "drivers online")}</Text>
             </View>
           </View>
 
@@ -366,8 +370,8 @@ export default function ExploreScreen() {
         pointerEvents={safetyOpen ? "auto" : "none"}
       >
         <LinearGradient colors={["#0c1f3f", "#0e4a6e"]} style={styles.safetyHeader}>
-          <Text style={styles.safetyTitle}>Safety Tools</Text>
-          <Text style={styles.safetySub}>Every ride is protected</Text>
+        <Text style={styles.safetyTitle}>{t("safetyTools", "Safety Tools")}</Text>
+        <Text style={styles.safetySub}>{t("everyRideProtected", "Every ride is protected")}</Text>
           <Pressable style={styles.safetyClose} onPress={closeSafety}>
             <Text style={styles.safetyCloseText}>✕</Text>
           </Pressable>
@@ -389,8 +393,8 @@ export default function ExploreScreen() {
               >
                 <View style={[styles.safetyDot, { backgroundColor: item.dot }]} />
                 <View style={styles.safetyRowContent}>
-                  <Text style={styles.safetyRowLabel}>{item.label}</Text>
-                  <Text style={styles.safetyRowSub}>{item.sub}</Text>
+                  <Text style={styles.safetyRowLabel}>{t("safety_" + item.id + "_label", item.label)}</Text>
+                  <Text style={styles.safetyRowSub}>{t("safety_" + item.id + "_sub", item.sub)}</Text>
                 </View>
                 {item.type === "toggle" ? (
                   <Switch
@@ -407,9 +411,9 @@ export default function ExploreScreen() {
           ))}
 
           <View style={styles.trustRow}>
-            {["✅ ID Verified", "🔐 Encrypted", "⭐ Community Rated"].map((b) => (
+          {["✅ ID Verified", "🔐 Encrypted", "⭐ Community Rated"].map((b, i) => (
               <View key={b} style={styles.trustBadge}>
-                <Text style={styles.trustBadgeText}>{b}</Text>
+              <Text style={styles.trustBadgeText}>{t(`trustBadge_${i}`, b)}</Text>
               </View>
             ))}
           </View>
@@ -417,7 +421,7 @@ export default function ExploreScreen() {
       </Animated.View>
 
       {/* ── BOTTOM DRAWER ────────────────────────────────────────────────── */}
-      <Animated.View
+      <RNAnimated.View
         // Using RN Animated.Value for height (PanResponder requires setValue)
         style={[styles.drawer, { height: drawerY as any }]}
         {...panResponder.panHandlers}
@@ -430,8 +434,8 @@ export default function ExploreScreen() {
         {/* Header */}
         <View style={styles.drawerHeaderRow}>
           <View>
-            <Text style={styles.drawerTitle}>Nearby Rides</Text>
-            <Text style={styles.drawerSub}>{filteredRoutes.length} routes · Updated now</Text>
+            <Text style={styles.drawerTitle}>{t("nearbyRides", "Nearby Rides")}</Text>
+            <Text style={styles.drawerSub}>{filteredRoutes.length} {t("routesUpdatedNow", "routes · Updated now")}</Text>
           </View>
           <Pressable
             style={styles.drawerCTASmall}
@@ -440,7 +444,7 @@ export default function ExploreScreen() {
               router.push("/(tabs)/ride-request");
             }}
           >
-            <Text style={styles.drawerCTASmallText}>Get a ride →</Text>
+            <Text style={styles.drawerCTASmallText}>{t("getARideSmall", "Get a ride →")}</Text>
           </Pressable>
         </View>
 
@@ -460,7 +464,7 @@ export default function ExploreScreen() {
               >
                 <Text style={styles.filterChipIcon}>{f.icon}</Text>
                 <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
-                  {f.label}
+                  {t("filter_" + f.key, f.label)}
                 </Text>
               </Pressable>
             );
@@ -479,8 +483,8 @@ export default function ExploreScreen() {
           ) : (
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>🗺️</Text>
-              <Text style={styles.emptyTitle}>No routes match</Text>
-              <Text style={styles.emptySub}>Try "All Routes" to see nearby drivers</Text>
+              <Text style={styles.emptyTitle}>{t("noRoutesMatch", "No routes match")}</Text>
+              <Text style={styles.emptySub}>{t("tryAllRoutes", "Try \"All Routes\" to see nearby drivers")}</Text>
             </View>
           )}
 
@@ -497,12 +501,12 @@ export default function ExploreScreen() {
               start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
               style={styles.drawerCTAGradient}
             >
-              <Text style={styles.drawerCTAText}>Book your ride  →</Text>
-              <Text style={styles.drawerCTASub}>Free · Verified drivers · No surge</Text>
+              <Text style={styles.drawerCTAText}>{t("bookYourRide", "Book your ride  →")}</Text>
+              <Text style={styles.drawerCTASub}>{t("freeVerifiedNoSurge", "Free · Verified drivers · No surge")}</Text>
             </LinearGradient>
           </Pressable>
         </ScrollView>
-      </Animated.View>
+      </RNAnimated.View>
 
     </View>
   );

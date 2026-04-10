@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, Platform, Pressable, Alert } from "react-native";
 import { useCameraPermissions, CameraView } from "expo-camera";
+import { useTranslation } from "react-i18next";
 
 export default function SessionRecorder({ isActive, rideId }: { isActive: boolean; rideId: string }) {
+  const { t } = useTranslation();
   const [permission, requestPermission] = useCameraPermissions();
   const [isRecording, setIsRecording] = useState(false);
 
@@ -23,9 +25,9 @@ export default function SessionRecorder({ isActive, rideId }: { isActive: boolea
   if (!permission.granted) {
     return (
       <View style={styles.container}>
-        <Text style={styles.text}>Camera permission is required to record the trip.</Text>
+        <Text style={styles.text}>{t("cameraPermissionRequiredTrip")}</Text>
         <Pressable style={styles.button} onPress={requestPermission}>
-          <Text style={styles.buttonText}>Grant Permission</Text>
+          <Text style={styles.buttonText}>{t("grantPermission")}</Text>
         </Pressable>
       </View>
     );
@@ -35,13 +37,13 @@ export default function SessionRecorder({ isActive, rideId }: { isActive: boolea
     <View style={styles.container}>
       <View style={styles.recordingIndicator}>
         <View style={[styles.redDot, isRecording && styles.recordingBlink]} />
-        <Text style={styles.text}>{isRecording ? "Recording Trip" : "Camera Ready"}</Text>
+        <Text style={styles.text}>{isRecording ? t("recordingTrip") : t("cameraReady")}</Text>
       </View>
       <Pressable 
         style={styles.flagButton} 
-        onPress={() => Alert.alert("Trip Flagged", "This session recording will be retained for review.")}
+        onPress={() => Alert.alert(t("tripFlagged"), t("sessionRecordingRetainedReview"))}
       >
-        <Text style={styles.flagButtonText}>Flag Trip</Text>
+        <Text style={styles.flagButtonText}>{t("flagTrip")}</Text>
       </Pressable>
       {/* The CameraView can be hidden or styled as a small thumbnail depending on your UI needs */}
       <CameraView style={StyleSheet.absoluteFillObject} visible={false} />

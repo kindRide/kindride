@@ -1,8 +1,10 @@
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { useStripe } from "@stripe/stripe-react-native";
+import { LinearGradient } from "expo-linear-gradient";
+import * as Haptics from "expo-haptics";
 
 import {
   getJourneysCompleteUrlOrNull,
@@ -15,6 +17,18 @@ import type { TravelDirection } from "@/lib/matching-drivers";
 import { awardPoints } from "@/lib/points-award";
 import { supabase } from "@/lib/supabase";
 
+// Chip-based appreciation tags shown after star rating
+const APPRECIATION_TAGS = [
+  { emoji: "🚗", key: "smoothRide" },
+  { emoji: "🛡️", key: "superSafe" },
+  { emoji: "💬", key: "greatChat" },
+  { emoji: "⏱️", key: "onTime" },
+  { emoji: "💙", key: "veryKind" },
+  { emoji: "🗺️", key: "topNavigator" },
+  { emoji: "🎵", key: "greatMusic" },
+  { emoji: "✨", key: "aboveAndBeyond" },
+];
+
 // Preset tip amounts in cents. Passenger picks one or skips.
 const TIP_PRESETS = [
   { label: "$1", cents: 100 },
@@ -25,6 +39,7 @@ const TIP_PRESETS = [
 export default function PostTripRatingScreen() {
   const router = useRouter();
   const { t } = useTranslation();
+  const appreciationLabel = (key: string) => t(`appreciationTag.${key}`);
   const params = useLocalSearchParams<{
     rideId?: string;
     driverId?: string;
@@ -105,6 +120,7 @@ export default function PostTripRatingScreen() {
   // This screen is used in the passenger flow (passenger rates driver),
   // but we still show the points impact for the driver for demo clarity.
   const [rating, setRating] = useState(0);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [review, setReview] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [earnedPoints, setEarnedPoints] = useState(0);
@@ -309,22 +325,50 @@ export default function PostTripRatingScreen() {
   };
 
   return (
-    <View style={styles.screen}>
+    <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 40 }}>
       <Text style={styles.title}>{t("rateYourTripTitle")}</Text>
       <Text style={styles.subtitle}>{t("rateYourTripSubtitle", { driverName })}</Text>
       {journeyId && passengerIdParam ? (
         <Text style={styles.multiLegHint}>
-          Multi-leg trip (leg {legIdx}). Continue to your next driver, or confirm you have arrived.
+          {t("multiLegTripLegHint", { leg: legIdx })}
         </Text>
       ) : null}
 
       <View style={styles.starsRow}>
         {[1, 2, 3, 4, 5].map((star) => (
-          <Pressable key={star} onPress={() => setRating(star)}>
+          <Pressable key={star} onPress={() => { setRating(star); void Haptics.selectionAsync(); }}>
             <Text style={star <= rating ? styles.starActive : styles.starInactive}>★</Text>
           </Pressable>
         ))}
       </View>
+
+      {/* Appreciation chip tags — shown once a star is selected */}
+      {rating >= 1 && (
+        <View style={styles.tagsSection}>
+          <Text style={styles.tagsLabel}>{t("whatMadeItGreat")}</Text>
+          <View style={styles.tagsWrap}>
+            {APPRECIATION_TAGS.map((tag) => {
+              const label = appreciationLabel(tag.key);
+              const selected = selectedTags.includes(label);
+              return (
+                <Pressable
+                  key={tag.key}
+                  onPress={() => {
+                    void Haptics.selectionAsync();
+                    setSelectedTags((prev) =>
+                      selected ? prev.filter((t) => t !== label) : [...prev, label]
+                    );
+                  }}
+                  style={[styles.tag, selected && styles.tagSelected]}
+                >
+                  <Text style={styles.tagEmoji}>{tag.emoji}</Text>
+                  <Text style={[styles.tagText, selected && styles.tagTextSelected]}>{label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      )}
 
       <TextInput
         placeholder={t("optionalReviewPlaceholder")}
@@ -424,9 +468,9 @@ export default function PostTripRatingScreen() {
           {/* Voluntary tip — shown only after rating, never prompted by driver */}
           {tipsUrl && tipStatus !== "success" && tipStatus !== "skipped" ? (
             <View style={styles.tipBlock}>
-              <Text style={styles.tipTitle}>Leave a voluntary tip?</Text>
+              <Text style={styles.tipTitle}>{t("leaveVoluntaryTip")}</Text>
               <Text style={styles.tipHint}>
-                100% goes to {driverName}. Completely optional — drivers never see whether you tipped.
+                {t("tipHint", { driverName })}
               </Text>
               <View style={styles.tipRow}>
                 {TIP_PRESETS.map(({ label, cents }) => (
@@ -449,25 +493,67 @@ export default function PostTripRatingScreen() {
                   onPress={() => selectedTipCents && handleTip(selectedTipCents)}
                 >
                   <Text style={styles.tipSendBtnText}>
-                    {tipStatus === "loading" ? "Processing…" : `Send tip${selectedTipCents ? ` (${TIP_PRESETS.find(p => p.cents === selectedTipCents)?.label})` : ""}`}
+                    {tipStatus === "loading"
+                      ? t("processing")
+                      : t("sendTipWithAmount", {
+                          amount: selectedTipCents ? ` (${TIP_PRESETS.find((p) => p.cents === selectedTipCents)?.label})` : "",
+                        })}
                   </Text>
                 </Pressable>
                 <Pressable onPress={() => setTipStatus("skipped")}>
-                  <Text style={styles.tipSkip}>No thanks</Text>
+                  <Text style={styles.tipSkip}>{t("noThanks")}</Text>
                 </Pressable>
               </View>
             </View>
           ) : null}
           {tipStatus === "success" ? (
-            <Text style={styles.tipSuccess}>Tip sent — thank you for your kindness!</Text>
+            <Text style={styles.tipSuccess}>{t("tipSentThanks")}</Text>
           ) : null}
 
           <Pressable onPress={() => router.replace("/(tabs)")} style={styles.homeButton}>
             <Text style={styles.homeButtonText}>{t("backToHome")}</Text>
           </Pressable>
+
+          {/* ── Shareable Ride Card ─────────────────────────────────── */}
+          <View style={styles.shareCardWrap}>
+            <LinearGradient
+              colors={["#0c1f3f", "#0a5c54"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.shareCard}
+            >
+              <Text style={styles.shareCardBrand}>KindRide 💙</Text>
+              <Text style={styles.shareCardTitle}>{t("shareCardCompletedKindRide")}</Text>
+              {completedLegMiles > 0 && (
+                <Text style={styles.shareCardStat}>
+                  {t("shareCardMilesPoints", { miles: completedLegMiles.toFixed(1), points: earnedPoints })}
+                </Text>
+              )}
+              {selectedTags.length > 0 && (
+                <Text style={styles.shareCardTags}>{selectedTags.join(" · ")}</Text>
+              )}
+              <Text style={styles.shareCardCta}>{t("everyRideBuildsCommunity")}</Text>
+            </LinearGradient>
+            <Pressable
+              style={styles.shareBtn}
+              onPress={async () => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                await Share.share({
+                  message: t("shareRideMessage", {
+                    stats: completedLegMiles > 0
+                      ? t("shareRideStats", { miles: completedLegMiles.toFixed(1), points: earnedPoints })
+                      : "",
+                  }),
+                  title: t("shareRideTitle"),
+                });
+              }}
+            >
+              <Text style={styles.shareBtnText}>{t("shareThisRide")}</Text>
+            </Pressable>
+          </View>
         </View>
       ) : null}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -745,4 +831,34 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 8,
   },
+  // Appreciation tags
+  tagsSection: { marginTop: 16, marginBottom: 4 },
+  tagsLabel: { fontSize: 13, fontWeight: "700", color: "#334155", marginBottom: 10 },
+  tagsWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  tag: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingVertical: 8, paddingHorizontal: 12,
+    borderRadius: 20, borderWidth: 1.5,
+    borderColor: "#dbe4f5", backgroundColor: "#ffffff",
+  },
+  tagSelected: { borderColor: "#2563eb", backgroundColor: "#eff6ff" },
+  tagEmoji: { fontSize: 13 },
+  tagText: { fontSize: 13, fontWeight: "600", color: "#4b587c" },
+  tagTextSelected: { color: "#1d4ed8" },
+  // Shareable ride card
+  shareCardWrap: { marginTop: 20, width: "100%", alignItems: "center", gap: 10 },
+  shareCard: {
+    width: "100%", borderRadius: 16, padding: 20, gap: 6,
+  },
+  shareCardBrand: { color: "#5eead4", fontSize: 13, fontWeight: "700", letterSpacing: 0.5 },
+  shareCardTitle: { color: "#ffffff", fontSize: 20, fontWeight: "800", lineHeight: 26 },
+  shareCardStat: { color: "rgba(255,255,255,0.75)", fontSize: 13, fontWeight: "600" },
+  shareCardTags: { color: "#99f6e4", fontSize: 12, fontWeight: "600", marginTop: 4 },
+  shareCardCta: { color: "rgba(255,255,255,0.55)", fontSize: 12, marginTop: 6 },
+  shareBtn: {
+    backgroundColor: "#2563eb", borderRadius: 10,
+    paddingVertical: 11, paddingHorizontal: 24,
+    minWidth: 200, alignItems: "center",
+  },
+  shareBtnText: { color: "#ffffff", fontWeight: "700", fontSize: 14 },
 });

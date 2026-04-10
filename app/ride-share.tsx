@@ -1,5 +1,6 @@
 import { useLocalSearchParams } from "expo-router";
 import { useEffect, useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
   Pressable,
@@ -14,6 +15,7 @@ import { getRideShareStatusUrlOrNull } from "@/lib/backend-api-urls";
 import { formatBackendErrorBody } from "@/lib/backend-error";
 
 function RideShareScreen() {
+  const { t } = useTranslation();
   const params = useLocalSearchParams<{ shareToken?: string }>();
   const initialShareToken = typeof params.shareToken === "string" ? params.shareToken : "";
 
@@ -34,14 +36,14 @@ function RideShareScreen() {
   const loadSharedRide = useCallback(async (silent = false) => {
     if (!shareToken) {
       setDetail(null);
-      setError("Enter a share token.");
+      setError(t("enterShareToken"));
       return;
     }
 
     const url = getRideShareStatusUrlOrNull(shareToken);
     if (!url) {
       setDetail(null);
-      setError("Backend is not configured.");
+      setError(t("backendNotConfigured"));
       return;
     }
 
@@ -70,11 +72,11 @@ function RideShareScreen() {
       setDetail(json);
     } catch (e) {
       setDetail(null);
-      setError(e instanceof Error ? e.message : "Failed loading shared ride.");
+      setError(e instanceof Error ? e.message : t("failedLoadingSharedRide"));
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [shareToken]);
+  }, [shareToken, t]);
 
   useEffect(() => {
     if (initialShareToken) {
@@ -93,26 +95,24 @@ function RideShareScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.screen}>
-      <Text style={styles.title}>Shared trip</Text>
-      <Text style={styles.body}>
-        Enter the share token from the driver/passenger to view an active trip status.
-      </Text>
+      <Text style={styles.title}>{t("sharedTrip")}</Text>
+      <Text style={styles.body}>{t("enterShareTokenToViewTrip")}</Text>
 
       <TextInput
         style={styles.input}
         value={shareToken}
-        placeholder="Share token"
+        placeholder={t("shareToken")}
         autoCapitalize="none"
         autoCorrect={false}
         onChangeText={setShareToken}
       />
       <Pressable style={styles.primaryBtn} onPress={() => loadSharedRide(false)} disabled={loading}>
-        <Text style={styles.primaryBtnText}>{loading ? "Loading..." : "Load shared ride"}</Text>
+        <Text style={styles.primaryBtnText}>{loading ? t("loading") : t("loadSharedRide")}</Text>
       </Pressable>
 
       {error ? (
         <View style={styles.errorBanner}>
-          <Text style={styles.errorBannerTitle}>Error</Text>
+          <Text style={styles.errorBannerTitle}>{t("error")}</Text>
           <Text style={styles.errorBannerBody}>{error}</Text>
         </View>
       ) : null}
@@ -121,22 +121,22 @@ function RideShareScreen() {
         <ActivityIndicator size="large" color="#2563eb" />
       ) : detail ? (
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Ride</Text>
-          <Text style={styles.cardLine}>ID: {detail.rideId}</Text>
-          <Text style={styles.cardLine}>Status: {detail.status}</Text>
-          {detail.destinationLabel ? <Text style={styles.cardLine}>Destination: {detail.destinationLabel}</Text> : null}
+          <Text style={styles.cardTitle}>{t("ride")}</Text>
+          <Text style={styles.cardLine}>{t("idLabel", { value: detail.rideId })}</Text>
+          <Text style={styles.cardLine}>{t("statusLabelSimple", { status: detail.status })}</Text>
+          {detail.destinationLabel ? <Text style={styles.cardLine}>{t("destination", { dest: detail.destinationLabel })}</Text> : null}
           {detail.pickupLat != null && detail.pickupLng != null ? (
-            <Text style={styles.cardLine}>Pickup: {detail.pickupLat.toFixed(5)}, {detail.pickupLng.toFixed(5)}</Text>
+            <Text style={styles.cardLine}>{t("pickupCoords", { lat: detail.pickupLat.toFixed(5), lng: detail.pickupLng.toFixed(5) })}</Text>
           ) : null}
           {detail.destinationLat != null && detail.destinationLng != null ? (
-            <Text style={styles.cardLine}>Dropoff: {detail.destinationLat.toFixed(5)}, {detail.destinationLng.toFixed(5)}</Text>
+            <Text style={styles.cardLine}>{t("dropoffCoords", { lat: detail.destinationLat.toFixed(5), lng: detail.destinationLng.toFixed(5) })}</Text>
           ) : null}
-          {detail.driverId ? <Text style={styles.cardLine}>Driver ID: {detail.driverId}</Text> : null}
+          {detail.driverId ? <Text style={styles.cardLine}>{t("driverIdLabel", { id: detail.driverId })}</Text> : null}
         </View>
       ) : null}
 
       <Text style={styles.hint}>
-        Tip: call /rides/share-token from driver or passenger device using the current rideId, then open this screen with that token.
+        {t("rideShareHintBody")}
       </Text>
     </ScrollView>
   );

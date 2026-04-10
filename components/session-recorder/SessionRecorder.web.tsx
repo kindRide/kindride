@@ -1,17 +1,19 @@
 // Web: camera-based session recording is not available on the web build.
 // Displays a passive recording indicator only.
 import { StyleSheet, Text, View } from "react-native";
+import { useTranslation } from "react-i18next";
 
 type Props = { isActive: boolean; rideId: string };
 
 export default function SessionRecorder({ isActive }: Props) {
+  const { t } = useTranslation();
   if (!isActive) return null;
 
   return (
     <View style={styles.container}>
       <View style={styles.row}>
         <View style={styles.dot} />
-        <Text style={styles.label}>Session recording active (mobile only)</Text>
+        <Text style={styles.label}>{t("sessionRecordingActiveMobileOnly")}</Text>
       </View>
     </View>
   );

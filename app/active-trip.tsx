@@ -33,6 +33,7 @@ import {
   type DriverCard,
   type TravelDirection,
 } from "@/lib/matching-drivers";
+import { attestRouteCommitment } from "@/lib/route-commitment";
 import { supabase } from "@/lib/supabase";
 
 export default function ActiveTripScreen() {
@@ -132,7 +133,7 @@ export default function ActiveTripScreen() {
     setNextDriver({
       id,
       name,
-      tier: "Helper",
+      tier: t("helperTier"),
       etaMinutes,
       distanceMiles: 0,
       intent: "already_going",
@@ -562,7 +563,7 @@ export default function ActiveTripScreen() {
       setShareToken(tokenGot);
       setShareUrl(deepLink);
 
-      await Share.share({ message: `Track my ride: ${deepLink}` });
+      await Share.share({ message: t("trackMyRide", { deepLink }) });
     } catch (e) {
       const message = e instanceof Error ? e.message : t("shareTripLinkError");
       setShareError(message);
@@ -584,7 +585,7 @@ export default function ActiveTripScreen() {
         <Text style={styles.title}>{t("activeTrip")}</Text>
         <Link href="/sos" asChild>
           <Pressable style={styles.sosButton}>
-            <Text style={styles.sosButtonText}>SOS</Text>
+            <Text style={styles.sosButtonText}>{t("sosShort")}</Text>
           </Pressable>
         </Link>
       </View>
@@ -657,7 +658,7 @@ export default function ActiveTripScreen() {
         <TextInput
           value={legMilesText}
           onChangeText={setLegMilesText}
-          placeholder="Auto-filled on End Trip"
+          placeholder={t("autoFilledOnEndTrip")}
           keyboardType="decimal-pad"
           style={styles.legMilesInput}
         />
@@ -681,8 +682,8 @@ export default function ActiveTripScreen() {
 
             if (rideStatus && !["accepted", "in_progress", "completed"].includes(rideStatus)) {
               Alert.alert(
-                t("rideNotReady", "Ride not ready"),
-                t("rideStatusWait", "Ride status is '{{status}}'. Please wait for the driver to accept this ride before ending.", { status: rideStatus })
+                t("rideNotReady"),
+                t("rideStatusWait", { status: rideStatus })
               );
               return;
             }
@@ -754,6 +755,24 @@ export default function ActiveTripScreen() {
                 ...(startedAtToSend ? { startedAt: startedAtToSend } : {}),
               };
 
+              const isDriverFlow = !driverId;
+              if (isDriverFlow) {
+                try {
+                  await attestRouteCommitment({
+                    rideId,
+                    declaredIntent: wasZeroDetour ? "zero_detour" : "detour",
+                    pickup: pickupPoint,
+                    dropoff: resolvedDropoff,
+                    destination: hasDest
+                      ? { latitude: destLatNum, longitude: destLngNum }
+                      : null,
+                    distanceMiles: miles,
+                  });
+                } catch (e) {
+                  console.warn("[route-commitment] attestation failed", e);
+                }
+              }
+
               const response = await fetch(ridesCompleteEndpoint, {
                 method: "POST",
                 headers: {
@@ -785,7 +804,6 @@ export default function ActiveTripScreen() {
               };
               // If driverId was not passed, the current user IS the driver (came from incoming-ride).
               // Route them to rate-passenger. Otherwise this is the passenger — rate the driver.
-              const isDriverFlow = !driverId;
               if (isDriverFlow) {
                 const effectivePassengerId = ridePassengerId ?? passengerId ?? "";
                 router.push({
@@ -799,7 +817,7 @@ export default function ActiveTripScreen() {
                 });
               }
             } catch (e) {
-              const message = e instanceof Error ? e.message : t("rideCompletionFailed", "Ride completion failed.");
+              const message = e instanceof Error ? e.message : t("rideCompletionFailed");
               Alert.alert(
                 t("couldNotCompleteRide"),
                 message + "\n\n" + t("signInOnPointsTab")

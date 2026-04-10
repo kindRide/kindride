@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import base64
 import hmac
+import json
 import logging
 import math
 import os
@@ -81,6 +82,10 @@ from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Requ
 from fastapi.middleware.cors import CORSMiddleware
 from jwt import PyJWKClient
 from pydantic import BaseModel, Field, field_validator
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 try:
     from slowapi import Limiter, _rate_limit_exceeded_handler
     from slowapi.util import get_remote_address
@@ -108,6 +113,10 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "").strip()
 SHARE_TOKEN_SECRET = os.getenv("SHARE_TOKEN_SECRET", "kindride-default-share-secret").strip()
+KINDRIDE_ROUTE_COMMITMENT_SECRET = os.getenv(
+    "KINDRIDE_ROUTE_COMMITMENT_SECRET",
+    SUPABASE_JWT_SECRET or SHARE_TOKEN_SECRET or "kindride-route-commitment-secret",
+).strip()
 
 # P2.1: Stripe Identity — set STRIPE_WEBHOOK_SECRET to enable webhook verification.
 # Set KINDRIDE_REQUIRE_ID_VERIFIED=true to hard-filter unverified drivers from matching.
@@ -143,7 +152,7 @@ logging.basicConfig(
     ]
 )
 
-app = FastAPI(title="KindRide Points API", version="0.7.0")
+app = FastAPI(title="KindRide Points API", version="0.8.0")
 
 # Rate limiting — requires `pip install slowapi`.
 if _SLOWAPI_AVAILABLE:
@@ -236,6 +245,69 @@ def _service_headers() -> dict[str, str]:
         "User-Agent": "KindRideBackend/1.0 (server)",
         "Accept": "application/json",
     }
+
+
+def _canonical_json(value: dict) -> str:
+    return json.dumps(value, separators=(",", ":"), sort_keys=True)
+
+
+def _b64decode_loose(value: str) -> bytes:
+    padded = value.strip().replace("-", "+").replace("_", "/")
+    padded += "=" * ((4 - len(padded) % 4) % 4)
+    return base64.b64decode(padded)
+
+
+def _jwk_b64url_to_int(value: str) -> int:
+    return int.from_bytes(_b64decode_loose(value), "big")
+
+
+def _ecdsa_public_key_from_jwk(public_jwk_json: str):
+    jwk = json.loads(public_jwk_json)
+    if jwk.get("kty") != "EC" or jwk.get("crv") != "P-256":
+        raise ValueError("Only P-256 EC public keys are supported.")
+    return ec.EllipticCurvePublicNumbers(
+        _jwk_b64url_to_int(jwk["x"]),
+        _jwk_b64url_to_int(jwk["y"]),
+        ec.SECP256R1(),
+    ).public_key()
+
+
+def _normalize_ecdsa_signature(signature_b64: str) -> bytes:
+    sig = _b64decode_loose(signature_b64)
+    # Web Crypto often returns the raw IEEE-P1363 (r||s) form for ECDSA.
+    if len(sig) == 64:
+        r = int.from_bytes(sig[:32], "big")
+        s = int.from_bytes(sig[32:], "big")
+        return encode_dss_signature(r, s)
+    return sig
+
+
+def _verify_ecdsa_signature(public_jwk_json: str, payload: str, signature_b64: str) -> bool:
+    public_key = _ecdsa_public_key_from_jwk(public_jwk_json)
+    public_key.verify(
+        _normalize_ecdsa_signature(signature_b64),
+        payload.encode("utf-8"),
+        ec.ECDSA(hashes.SHA256()),
+    )
+    return True
+
+
+def _route_commitment_hash(signed_payload: str) -> str:
+    secret = KINDRIDE_ROUTE_COMMITMENT_SECRET.encode("utf-8")
+    return hmac.new(secret, signed_payload.encode("utf-8"), sha256).hexdigest()
+
+
+def _point_inside_bbox(lat: float | None, lng: float | None, bbox: dict | None, tolerance: float = 0.0025) -> bool:
+    if lat is None or lng is None or not isinstance(bbox, dict):
+        return False
+    try:
+        min_lat = float(bbox["minLat"]) - tolerance
+        max_lat = float(bbox["maxLat"]) + tolerance
+        min_lng = float(bbox["minLng"]) - tolerance
+        max_lng = float(bbox["maxLng"]) + tolerance
+    except Exception:
+        return False
+    return min_lat <= lat <= max_lat and min_lng <= lng <= max_lng
 
 
 def _verify_user_bearer_token(authorization: str | None) -> str:
@@ -558,7 +630,11 @@ def _get_journey_row(client: httpx.Client, journey_id: str) -> dict | None:
 def _ensure_journey_active_for_passenger(
     client: httpx.Client, journey_id: str, passenger_id: str
 ) -> None:
-    """Multi-leg: ride completion must reference an active journey owned by this passenger."""
+    """
+    Multi-leg: ride completion must reference a journey owned by this passenger
+    that is either `active` or `leg_aborted` (passenger retrying after a failed
+    handoff). Completing a leg auto-heals a `leg_aborted` journey back to active.
+    """
     row = _get_journey_row(client, journey_id)
     if not row:
         raise HTTPException(
@@ -569,10 +645,21 @@ def _ensure_journey_active_for_passenger(
         )
     if str(row.get("passenger_id")) != passenger_id:
         raise HTTPException(status_code=403, detail="This journey belongs to another passenger.")
-    if row.get("status") != "active":
+    status = str(row.get("status") or "")
+    if status == "leg_aborted":
+        # Passenger found a new driver and is completing the leg — heal the journey.
+        now = datetime.now(timezone.utc).isoformat()
+        client.patch(
+            _rest_url("/journeys"),
+            params={"id": f"eq.{journey_id}"},
+            headers={**_service_headers(), "Prefer": "return=minimal"},
+            json={"status": "active", "updated_at": now},
+            timeout=10.0,
+        )
+    elif status != "active":
         raise HTTPException(
             status_code=400,
-            detail="This journey is no longer active (completed or cancelled).",
+            detail=f"This journey is no longer active (status: {status}).",
         )
 
 
@@ -1833,6 +1920,63 @@ class CompleteJourneyRequest(BaseModel):
         return v
 
 
+class AbortLegRequest(BaseModel):
+    """
+    Passenger signals that the handoff for the next leg failed — Driver B
+    declined, expired, or is no longer available — and the passenger is
+    stranded at an intermediate point.  The journey moves to `leg_aborted`
+    so the app can surface a clear recovery UI (retry search, call for help).
+    """
+
+    journeyId: str = Field(min_length=3)
+    legIndex: int = Field(ge=1, le=500, description="The leg that failed to start.")
+    reason: str = Field(
+        default="driver_unavailable",
+        description="One of: driver_unavailable | driver_declined | passenger_cancelled | timeout",
+    )
+
+    @field_validator("journeyId")
+    @classmethod
+    def journey_uuid(cls, v: str) -> str:
+        UUID(v)
+        return v
+
+
+class RouteCommitmentBBox(BaseModel):
+    minLat: float = Field(ge=-90, le=90)
+    maxLat: float = Field(ge=-90, le=90)
+    minLng: float = Field(ge=-180, le=180)
+    maxLng: float = Field(ge=-180, le=180)
+
+
+class RegisterRouteCommitmentRequest(BaseModel):
+    rideId: str = Field(min_length=3)
+    declaredIntent: Literal["zero_detour", "detour"]
+    corridorBBox: RouteCommitmentBBox
+    signedPayload: str = Field(min_length=10)
+    commitmentSig: str = Field(min_length=16)
+    devicePublicKey: str = Field(min_length=10)
+    signatureAlgorithm: Literal["ecdsa-p256-sha256"] = "ecdsa-p256-sha256"
+
+    @field_validator("rideId")
+    @classmethod
+    def ride_id_uuid(cls, v: str) -> str:
+        UUID(v)
+        return v
+
+
+class AttestRouteCommitmentRequest(BaseModel):
+    rideId: str = Field(min_length=3)
+    attestationPayload: str = Field(min_length=10)
+    attestationSig: str = Field(min_length=16)
+
+    @field_validator("rideId")
+    @classmethod
+    def ride_id_uuid(cls, v: str) -> str:
+        UUID(v)
+        return v
+
+
 @app.post("/journeys/register")
 def register_journey(
     payload: RegisterJourneyRequest,
@@ -1898,6 +2042,309 @@ def complete_journey_endpoint(
             raise HTTPException(status_code=502, detail=f"Update journey failed: {r.text}")
 
     return {"journey_id": payload.journeyId, "status": "completed"}
+
+
+@app.post("/journeys/abort-leg")
+def abort_journey_leg(
+    payload: AbortLegRequest,
+    authorization: str | None = Header(default=None),
+):
+    """
+    Called by the passenger app when Driver B fails to materialise for the next
+    leg — declined, expired, or the passenger waited too long at the handoff
+    point and gave up.
+
+    Transitions the journey to `leg_aborted` with metadata so the app can show:
+      - "Your next driver didn't arrive — here's what you can do."
+      - Retry search for a new driver on the same leg
+      - Call for help (SOS)
+      - End the journey and go home
+
+    A `leg_aborted` journey can be resumed (status set back to `active`) if the
+    passenger retries and finds a new driver — handled by the existing
+    /journeys/register idempotency flow.
+    """
+    _require_config()
+    passenger_id = _verify_user_bearer_token(authorization)
+    now = datetime.now(timezone.utc).isoformat()
+
+    valid_reasons = {"driver_unavailable", "driver_declined", "passenger_cancelled", "timeout"}
+    reason = payload.reason if payload.reason in valid_reasons else "driver_unavailable"
+
+    with httpx.Client() as client:
+        row = _get_journey_row(client, payload.journeyId)
+        if not row:
+            raise HTTPException(status_code=404, detail="Journey not found.")
+        if str(row.get("passenger_id")) != passenger_id:
+            raise HTTPException(status_code=403, detail="Not your journey.")
+
+        current_status = str(row.get("status") or "")
+        if current_status == "completed":
+            raise HTTPException(
+                status_code=409,
+                detail="Journey is already completed — cannot abort a leg.",
+            )
+        if current_status == "leg_aborted":
+            # Idempotent — already aborted, return current state.
+            return {
+                "journey_id": payload.journeyId,
+                "status": "leg_aborted",
+                "leg_index": payload.legIndex,
+                "reason": reason,
+                "idempotent": True,
+            }
+
+        r = client.patch(
+            _rest_url("/journeys"),
+            params={"id": f"eq.{payload.journeyId}"},
+            headers={**_service_headers(), "Prefer": "return=minimal"},
+            json={
+                "status": "leg_aborted",
+                "updated_at": now,
+                "aborted_leg_index": payload.legIndex,
+                "abort_reason": reason,
+            },
+            timeout=30.0,
+        )
+        if r.status_code not in (200, 204):
+            raise HTTPException(status_code=502, detail=f"abort-leg update failed: {r.text}")
+
+    logger.warning(
+        "MULTI_LEG_ABORT journey_id=%s leg=%d reason=%s passenger=%s",
+        payload.journeyId, payload.legIndex, reason, passenger_id,
+    )
+
+    return {
+        "journey_id": payload.journeyId,
+        "status": "leg_aborted",
+        "leg_index": payload.legIndex,
+        "reason": reason,
+        "message": (
+            "Your next driver couldn't be reached. You can retry the search, "
+            "ask someone nearby for help, or trigger SOS if you feel unsafe."
+        ),
+    }
+
+
+@app.post("/journeys/resume-leg")
+def resume_journey_leg(
+    payload: CompleteJourneyRequest,  # reuse — just needs journeyId
+    authorization: str | None = Header(default=None),
+):
+    """
+    Passenger retries finding a driver after a leg_aborted state.
+    Sets the journey back to `active` so the next /rides/complete leg can proceed.
+    """
+    _require_config()
+    passenger_id = _verify_user_bearer_token(authorization)
+    now = datetime.now(timezone.utc).isoformat()
+
+    with httpx.Client() as client:
+        row = _get_journey_row(client, payload.journeyId)
+        if not row:
+            raise HTTPException(status_code=404, detail="Journey not found.")
+        if str(row.get("passenger_id")) != passenger_id:
+            raise HTTPException(status_code=403, detail="Not your journey.")
+        if str(row.get("status")) == "active":
+            return {"journey_id": payload.journeyId, "status": "active", "idempotent": True}
+        if str(row.get("status")) != "leg_aborted":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Journey cannot be resumed from status '{row.get('status')}'.",
+            )
+        r = client.patch(
+            _rest_url("/journeys"),
+            params={"id": f"eq.{payload.journeyId}"},
+            headers={**_service_headers(), "Prefer": "return=minimal"},
+            json={"status": "active", "updated_at": now},
+            timeout=30.0,
+        )
+        if r.status_code not in (200, 204):
+            raise HTTPException(status_code=502, detail=f"resume-leg update failed: {r.text}")
+
+    return {"journey_id": payload.journeyId, "status": "active"}
+
+
+@app.post("/route-commitments/register")
+def register_route_commitment(
+    payload: RegisterRouteCommitmentRequest,
+    authorization: str | None = Header(default=None),
+):
+    """
+    Phase 1 — architecture stub.
+    The schema and signing fields are recorded for future ZK-proof enforcement.
+    Signature verification is logged but NOT enforced yet; this endpoint never
+    blocks a ride. Full verification will be enabled once liquidity targets are
+    met and the schema migration (zk_route_commitments_phase2.sql) is applied.
+    """
+    _require_config()
+    driver_id = _verify_user_bearer_token(authorization)
+
+    # Attempt signature verification — log result but never reject.
+    sig_valid: bool | None = None
+    try:
+        _verify_ecdsa_signature(payload.devicePublicKey, payload.signedPayload, payload.commitmentSig)
+        sig_valid = True
+    except InvalidSignature:
+        sig_valid = False
+        logger.info(
+            "Route commitment signature mismatch (not enforced yet): ride_id=%s driver=%s",
+            payload.rideId, driver_id,
+        )
+    except Exception as e:
+        sig_valid = None
+        logger.info(
+            "Route commitment sig check skipped (key/payload issue, not enforced): ride_id=%s err=%s",
+            payload.rideId, e,
+        )
+
+    try:
+        signed_obj = json.loads(payload.signedPayload)
+    except Exception:
+        signed_obj = {}
+
+    corridor_hash = _route_commitment_hash(payload.signedPayload)
+
+    # Persist to DB so the architecture is in place for when enforcement turns on.
+    # If the table doesn't exist yet, swallow the error gracefully.
+    committed_at: str | None = None
+    verification_status = "pending_enforcement"
+    with httpx.Client() as client:
+        try:
+            r = client.post(
+                _rest_url("/route_commitments"),
+                headers={**_service_headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
+                json={
+                    "ride_id": payload.rideId,
+                    "driver_id": driver_id,
+                    "corridor_hash": corridor_hash,
+                    "commitment_sig": payload.commitmentSig,
+                    "corridor_bbox": payload.corridorBBox.model_dump(),
+                    "declared_intent": payload.declaredIntent,
+                    "signed_payload": payload.signedPayload,
+                    "device_public_key": payload.devicePublicKey,
+                    "signature_algorithm": payload.signatureAlgorithm,
+                    "nonce": signed_obj.get("nonce"),
+                    "verification_status": verification_status,
+                },
+                timeout=15.0,
+            )
+            if r.status_code in (200, 201):
+                rows = _rest_json_list(r, "route commitment register")
+                row = rows[0] if rows else {}
+                committed_at = row.get("committed_at")
+                verification_status = row.get("verification_status", verification_status)
+            else:
+                logger.info(
+                    "Route commitment DB write skipped (table may not exist yet): %s",
+                    r.text[:200],
+                )
+        except Exception as e:
+            logger.info("Route commitment persist failed (non-blocking): %s", e)
+
+    return {
+        "ride_id": payload.rideId,
+        "driver_id": driver_id,
+        "verification_status": verification_status,
+        "sig_valid": sig_valid,
+        "committed_at": committed_at,
+        "note": "Signature enforcement not yet active. Architecture in place for Phase 2.",
+    }
+
+
+@app.post("/route-commitments/attest")
+def attest_route_commitment(
+    payload: AttestRouteCommitmentRequest,
+    authorization: str | None = Header(default=None),
+):
+    """
+    Phase 1 — architecture stub.
+    Attestation data is recorded. Signature verification is logged but NOT
+    enforced. The multiplier result defaults to True (no penalty) until Phase 2
+    enforcement is enabled.
+    """
+    _require_config()
+    driver_id = _verify_user_bearer_token(authorization)
+
+    try:
+        attestation = json.loads(payload.attestationPayload)
+    except Exception:
+        attestation = {}
+
+    actual = attestation.get("actual") or {}
+    dropoff = actual.get("dropoff") or {}
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Attempt to fetch existing commitment for corridor check logging.
+    # If table doesn't exist yet, swallow gracefully.
+    within_bbox: bool = True  # default: no penalty until enforcement is on
+    row_id: str | None = None
+    with httpx.Client() as client:
+        try:
+            r = client.get(
+                _rest_url("/route_commitments"),
+                headers=_service_headers(),
+                params={
+                    "ride_id": f"eq.{payload.rideId}",
+                    "driver_id": f"eq.{driver_id}",
+                    "select": "id,declared_intent,corridor_bbox,device_public_key,signature_algorithm",
+                    "limit": 1,
+                },
+                timeout=15.0,
+            )
+            if r.status_code == 200:
+                rows = r.json() if isinstance(r.json(), list) else []
+                if rows:
+                    row = rows[0]
+                    row_id = row.get("id")
+                    bbox = row.get("corridor_bbox")
+                    within_bbox = _point_inside_bbox(
+                        dropoff.get("latitude"), dropoff.get("longitude"), bbox
+                    )
+                    # Log sig result but never reject.
+                    try:
+                        _verify_ecdsa_signature(
+                            str(row.get("device_public_key") or ""),
+                            payload.attestationPayload,
+                            payload.attestationSig,
+                        )
+                    except Exception as sig_e:
+                        logger.info(
+                            "Attestation sig mismatch (not enforced): ride_id=%s err=%s",
+                            payload.rideId, sig_e,
+                        )
+        except Exception as e:
+            logger.info("Attestation DB fetch failed (non-blocking): %s", e)
+
+        # Record attestation data if we have a row to update.
+        if row_id:
+            try:
+                client.patch(
+                    _rest_url("/route_commitments"),
+                    headers={**_service_headers(), "Prefer": "return=minimal"},
+                    params={"id": f"eq.{row_id}"},
+                    json={
+                        "attestation_payload": payload.attestationPayload,
+                        "attestation_sig": payload.attestationSig,
+                        "attested_at": now,
+                        # Store observed result but keep status as pending_enforcement.
+                        "verification_status": "pending_enforcement",
+                        "deviation_flag": not within_bbox,
+                        "multiplier_awarded": False,  # not active yet
+                        "verified_at": now,
+                    },
+                    timeout=15.0,
+                )
+            except Exception as e:
+                logger.info("Attestation DB write failed (non-blocking): %s", e)
+
+    return {
+        "ride_id": payload.rideId,
+        "driver_id": driver_id,
+        "verification_status": "pending_enforcement",
+        "deviation_flag": not within_bbox,
+        "note": "Attestation enforcement not yet active. Data recorded for Phase 2.",
+    }
 
 
 class CompleteRideRequest(BaseModel):
@@ -2194,6 +2641,33 @@ def complete_ride(
         if payload.journeyId:
             body["journey_id"] = payload.journeyId
             body["leg_index"] = payload.legIndex
+        # ── M8 Minimum Trip Duration Guard ───────────────────────────────────
+        # Hard-block points if startedAt is present and the trip lasted < 2 minutes.
+        # Prevents two users sitting still and farming points by fake-completing rides.
+        # 2-minute floor is generous — even a 0.1-mile block takes ~30 seconds driving.
+        _MIN_TRIP_DURATION_SECONDS = 120
+        if payload.startedAt:
+            try:
+                start_dt = datetime.fromisoformat(payload.startedAt.replace("Z", "+00:00"))
+                trip_seconds = (datetime.now(timezone.utc) - start_dt).total_seconds()
+                if trip_seconds < _MIN_TRIP_DURATION_SECONDS:
+                    logger.warning(
+                        "FRAUD FLAG M8: trip too short. duration=%.0fs ride_id=%s caller=%s",
+                        trip_seconds, ride_id, caller_id,
+                    )
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Trip duration too short ({int(trip_seconds)}s). "
+                            "A minimum of 2 minutes is required to complete a ride."
+                        ),
+                    )
+            except HTTPException:
+                raise
+            except Exception:
+                pass  # malformed startedAt — let field_validator catch it upstream
+        # ── End M8 ───────────────────────────────────────────────────────────
+
         # ── M7 Fraud Distance Check ───────────────────────────────────────────
         # Verify claimed distanceMiles against real GPS haversine distance.
         # Drivers cannot fake long trips to inflate Kind Points.
@@ -2294,8 +2768,30 @@ def complete_ride(
             timeout=10.0
         )
 
+    route_commitment_status: str | None = None
+    route_commitment_multiplier_ok = payload.wasZeroDetour
+    if completing_driver_id:
+        with httpx.Client() as client:
+            r_commit = client.get(
+                _rest_url("/route_commitments"),
+                headers=_service_headers(),
+                params={
+                    "ride_id": f"eq.{ride_id}",
+                    "driver_id": f"eq.{completing_driver_id}",
+                    "select": "verification_status,multiplier_awarded",
+                    "limit": 1,
+                },
+                timeout=10.0,
+            )
+            if r_commit.status_code == 200:
+                commit_rows = _rest_json_list(r_commit, "route commitment status")
+                if commit_rows:
+                    route_commitment_status = str(commit_rows[0].get("verification_status") or "pending")
+                    if payload.wasZeroDetour and route_commitment_status == "failed":
+                        route_commitment_multiplier_ok = False
+
     # Non-blocking approach: award base leg points now; rating bonus happens later.
-    base_component = (10 + payload.distanceMiles) * (1.5 if payload.wasZeroDetour else 1.0)
+    base_component = (10 + payload.distanceMiles) * (1.5 if route_commitment_multiplier_ok else 1.0)
     base_points = int(round(base_component))
     total_points_awarded = 0
     points_earned = 0
@@ -2376,6 +2872,8 @@ def complete_ride(
         "base_points_earned": points_earned,
         "total_points_awarded": total_points_awarded,
         "base_points_idempotent": was_idempotent,
+        "route_commitment_status": route_commitment_status,
+        "route_commitment_multiplier_applied": route_commitment_multiplier_ok,
         "next_leg_search_status": "searching",
         "journey_id": payload.journeyId,
         "leg_index": payload.legIndex if payload.journeyId else None,

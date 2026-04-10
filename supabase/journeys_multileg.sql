@@ -5,10 +5,25 @@ create table if not exists public.journeys (
   id uuid primary key,
   passenger_id uuid not null references auth.users (id) on delete cascade,
   status text not null default 'active'
-    check (status in ('active', 'completed', 'cancelled')),
+    check (status in ('active', 'completed', 'cancelled', 'leg_aborted')),
+  aborted_leg_index int,
+  abort_reason text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Add leg_aborted to the status constraint and new columns on existing tables.
+-- Safe to run on an already-created table.
+alter table public.journeys
+  drop constraint if exists journeys_status_check;
+
+alter table public.journeys
+  add constraint journeys_status_check
+    check (status in ('active', 'completed', 'cancelled', 'leg_aborted'));
+
+alter table public.journeys
+  add column if not exists aborted_leg_index int,
+  add column if not exists abort_reason text;
 
 alter table public.journeys enable row level security;
 

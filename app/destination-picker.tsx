@@ -1,8 +1,10 @@
 import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import * as Location from "expo-location";
+import * as Haptics from "expo-haptics";
 
 import DestinationPickerMap from "@/components/destination-picker-map/DestinationPickerMap";
 import { geocodeAddressGoogle } from "@/lib/geocode-google";
@@ -13,8 +15,16 @@ type LatLng = {
   longitude: number;
 };
 
+const VIBES = [
+  { key: "silent", emoji: "🤫", label: "Silent" },
+  { key: "chat",   emoji: "💬", label: "Chat" },
+  { key: "music",  emoji: "🎵", label: "Music" },
+] as const;
+type Vibe = typeof VIBES[number]["key"];
+
 export default function DestinationPickerScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
   const params = useLocalSearchParams<{
     destinationLat?: string;
     destinationLng?: string;
@@ -34,6 +44,7 @@ export default function DestinationPickerScreen() {
   const [geocodeError, setGeocodeError] = useState<string | null>(null);
   const [destinationLabelOverride, setDestinationLabelOverride] = useState<string>("");
   const [recents, setRecents] = useState<RecentDestination[]>([]);
+  const [selectedVibe, setSelectedVibe] = useState<Vibe | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -123,8 +134,8 @@ export default function DestinationPickerScreen() {
     }
     return typeof params.destinationLabel === "string" && params.destinationLabel.length > 0
       ? params.destinationLabel
-      : "No destination selected";
-  }, [destinationPoint, destinationLabelOverride, params.destinationLabel]);
+      : t("noDestinationSelected");
+  }, [destinationPoint, destinationLabelOverride, params.destinationLabel, t]);
 
   const handleGeocodeSearch = async () => {
     // Some users accidentally paste trailing characters like `|` (from copied UI text),
@@ -162,9 +173,9 @@ export default function DestinationPickerScreen() {
       }
 
       const detail = google.errorMessage ? ` (${google.status}: ${google.errorMessage})` : ` (${google.status})`;
-      setGeocodeError(`Could not find that address. Try a more specific place.${detail}`);
+      setGeocodeError(t("geocodeCouldNotFindAddress", { detail }));
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Geocoding failed.";
+      const message = e instanceof Error ? e.message : t("geocodingFailed");
       setGeocodeError(message);
     } finally {
       setIsGeocoding(false);
@@ -173,12 +184,12 @@ export default function DestinationPickerScreen() {
 
   return (
     <View style={styles.screen}>
-      <Text style={styles.title}>Pick Destination</Text>
-      <Text style={styles.subtitle}>Tap the map to drop a destination pin.</Text>
+      <Text style={styles.title}>{t("pickDestination")}</Text>
+      <Text style={styles.subtitle}>{t("tapMapDropPin")}</Text>
 
       {recents.length > 0 ? (
         <View style={styles.recentsSection}>
-          <Text style={styles.recentsTitle}>Recent</Text>
+          <Text style={styles.recentsTitle}>{t("recent")}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentsRow}>
             {recents.map((r) => (
               <Pressable
@@ -208,11 +219,11 @@ export default function DestinationPickerScreen() {
       ) : null}
 
       <View style={styles.addressBox}>
-        <Text style={styles.addressLabel}>Type address</Text>
+        <Text style={styles.addressLabel}>{t("typeAddress")}</Text>
         <TextInput
           value={addressQuery}
           onChangeText={setAddressQuery}
-          placeholder="e.g. 123 Main St, City"
+          placeholder={t("addressExample")}
           autoCapitalize="none"
           style={styles.addressInput}
         />
@@ -225,7 +236,7 @@ export default function DestinationPickerScreen() {
           ]}
         >
           <Text style={styles.addressSearchBtnText}>
-            {isGeocoding ? "Searching..." : "Search address"}
+            {isGeocoding ? t("searching") : t("searchAddress")}
           </Text>
         </Pressable>
         {geocodeError ? <Text style={styles.geocodeError}>{geocodeError}</Text> : null}
@@ -233,14 +244,14 @@ export default function DestinationPickerScreen() {
 
       {Platform.OS === "web" ? (
         <View style={styles.webForm}>
-          <Text style={styles.webLabel}>Latitude</Text>
+          <Text style={styles.webLabel}>{t("latitude")}</Text>
           <TextInput
             value={latText}
             onChangeText={setLatText}
             keyboardType="decimal-pad"
             style={styles.webInput}
           />
-          <Text style={styles.webLabel}>Longitude</Text>
+          <Text style={styles.webLabel}>{t("longitude")}</Text>
           <TextInput
             value={lngText}
             onChangeText={setLngText}
@@ -248,14 +259,14 @@ export default function DestinationPickerScreen() {
             style={styles.webInput}
           />
           <Text style={styles.webHint}>
-            Web picker uses manual lat/lng input so testing doesn’t depend on native map taps.
+            {t("destinationWebHint")}
           </Text>
         </View>
       ) : (
         <View style={styles.mapWrap}>
           {isLoadingCenter ? (
             <View style={styles.loadingWrap}>
-              <Text style={styles.loadingText}>Loading map…</Text>
+              <Text style={styles.loadingText}>{t("loadingMap")}</Text>
             </View>
           ) : (
             <DestinationPickerMap
@@ -269,7 +280,7 @@ export default function DestinationPickerScreen() {
         </View>
       )}
 
-      <Text style={styles.coordsLabel}>Selected destination</Text>
+      <Text style={styles.coordsLabel}>{t("selectedDestination")}</Text>
       <Text style={styles.coordsValue}>{destinationLabel}</Text>
 
       <Pressable
@@ -294,14 +305,38 @@ export default function DestinationPickerScreen() {
               destinationLat: String(point.latitude),
               destinationLng: String(point.longitude),
               destinationLabel: labelToStore,
+              ...(selectedVibe ? { vibe: selectedVibe } : {}),
             },
           });
         }}
         disabled={isLoadingCenter || !destinationPoint}
         style={[styles.confirmButton, !destinationPoint && styles.confirmDisabled]}
       >
-        <Text style={styles.confirmText}>Use this destination</Text>
+        <Text style={styles.confirmText}>{t("useThisDestination")}</Text>
       </Pressable>
+
+      {/* ── Vibe Selector ────────────────────────────────────────────────────── */}
+      <View style={styles.vibeSection}>
+        <Text style={styles.vibeLabel}>{t("rideVibeOptional")}</Text>
+        <View style={styles.vibeRow}>
+          {VIBES.map((v) => {
+            const active = selectedVibe === v.key;
+            return (
+              <Pressable
+                key={v.key}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  setSelectedVibe(active ? null : v.key);
+                }}
+                style={[styles.vibeChip, active && styles.vibeChipActive]}
+              >
+                <Text style={styles.vibeEmoji}>{v.emoji}</Text>
+                <Text style={[styles.vibeChipText, active && styles.vibeChipTextActive]}>{t(`vibe_${v.key}`)}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
     </View>
   );
 }
@@ -474,5 +509,16 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontSize: 15,
   },
+  vibeSection: { marginTop: 16 },
+  vibeLabel: { fontSize: 13, fontWeight: "700", color: "#334155", marginBottom: 10 },
+  vibeRow: { flexDirection: "row", gap: 10 },
+  vibeChip: {
+    flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+    paddingVertical: 10, borderRadius: 12,
+    borderWidth: 1.5, borderColor: "#dbe4f5", backgroundColor: "#ffffff",
+  },
+  vibeChipActive: { borderColor: "#2563eb", backgroundColor: "#eff6ff" },
+  vibeEmoji: { fontSize: 16 },
+  vibeChipText: { fontSize: 13, fontWeight: "700", color: "#4b587c" },
+  vibeChipTextActive: { color: "#1d4ed8" },
 });
-

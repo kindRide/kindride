@@ -12,6 +12,7 @@ import {
   Switch,
   Text,
   TouchableOpacity,
+  useColorScheme,
   View,
 } from "react-native";
 import Reanimated, { FadeInDown } from "react-native-reanimated";
@@ -103,12 +104,13 @@ function SectionLabel({ label, delay = 0 }: { label: string; delay?: number }) {
 
 // ── VibeChip ─────────────────────────────────────────────────────────────────
 const VIBE_OPTIONS: { key: VibeMode; icon: string; label: string }[] = [
-  { key: "silent", icon: "🤫", label: "Silent" },
-  { key: "chat",   icon: "💬", label: "Chat" },
-  { key: "music",  icon: "🎵", label: "Music" },
+  { key: "silent", icon: "🤫", label: "vibe_silent" },
+  { key: "chat",   icon: "💬", label: "vibe_chat" },
+  { key: "music",  icon: "🎵", label: "vibe_music" },
 ];
 
 function VibePicker({ value, onChange }: { value: VibeMode; onChange: (v: VibeMode) => void }) {
+  const { t } = useTranslation();
   return (
     <View style={styles.vibeRow}>
       {VIBE_OPTIONS.map((v) => (
@@ -122,7 +124,7 @@ function VibePicker({ value, onChange }: { value: VibeMode; onChange: (v: VibeMo
         >
           <Text style={styles.vibeIcon}>{v.icon}</Text>
           <Text style={[styles.vibeLabel, value === v.key && styles.vibeLabelActive]}>
-            {v.label}
+            {t(v.label)}
           </Text>
         </Pressable>
       ))}
@@ -136,6 +138,8 @@ export default function SettingsScreen() {
   const { user, signOut } = useAuth();
   const { t, i18n } = useTranslation();
   const router = useRouter();
+  const colorScheme = useColorScheme();
+  const isDark = colorScheme === "dark";
 
   const [multiLegOn, setMultiLegOn] = useState(true);
   const [style, setStyle] = useState<MultiLegStyle>("last_resort");
@@ -275,11 +279,10 @@ export default function SettingsScreen() {
   const LANGS = [
     { code: "en", label: "English", flag: "🇺🇸" },
     { code: "es", label: "Español", flag: "🇲🇽" },
-    { code: "ar", label: "العربية", flag: "🇸🇦" },
   ] as const;
 
   return (
-    <SafeAreaView style={styles.root} edges={["top"]}>
+    <SafeAreaView style={[styles.root, isDark && { backgroundColor: "#0f172a" }]} edges={["top"]}>
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: 56 }}
@@ -306,7 +309,7 @@ export default function SettingsScreen() {
             </Text>
             {simplifiedMode && (
               <View style={styles.simplifiedBadge}>
-                <Text style={styles.simplifiedBadgeText}>🔠  Simplified mode ON</Text>
+                <Text style={styles.simplifiedBadgeText}>🔠  {t("simplifiedModeOn")}</Text>
               </View>
             )}
           </Reanimated.View>
@@ -330,13 +333,13 @@ export default function SettingsScreen() {
                   <Text style={[styles.profileName, S && styles.profileNameLarge]}>
                     {displayEmail ?? t("signedIn", "Signed in")}
                   </Text>
-                  <Text style={styles.profileSub}>Active account ✓</Text>
+                  <Text style={styles.profileSub}>{t("activeAccount")} ✓</Text>
                 </View>
               </View>
               <View style={styles.rowDivider} />
               <View style={styles.idBlock}>
-                <Text style={styles.idLabel}>User ID</Text>
-                <Text style={styles.idHint}>Share with support if you need help.</Text>
+                <Text style={styles.idLabel}>{t("userIdLabel")}</Text>
+                <Text style={styles.idHint}>{t("shareUserIdWithSupport")}</Text>
                 <View style={styles.monoWrap}>
                   <Text style={styles.monoText} selectable>{user.id}</Text>
                 </View>
@@ -347,7 +350,7 @@ export default function SettingsScreen() {
               icon="🔑"
               iconBg="#fef3c7"
               label={t("signIn", "Sign in")}
-              sub="Sign in to access your full account"
+                sub={t("signInToAccessFullAccount")}
               onPress={() => router.push("/sign-in")}
               simplified={S}
               last
@@ -364,8 +367,8 @@ export default function SettingsScreen() {
               <Text style={styles.rowIconText}>🎭</Text>
             </View>
             <View style={styles.rowContent}>
-              <Text style={[styles.rowLabel, S && styles.rowLabelSimplified]}>Default vibe</Text>
-              {!S && <Text style={styles.rowSub}>Shown to drivers before pickup</Text>}
+              <Text style={[styles.rowLabel, S && styles.rowLabelSimplified]}>{t("defaultVibe")}</Text>
+              {!S && <Text style={styles.rowSub}>{t("shownToDriversBeforePickup")}</Text>}
             </View>
           </View>
           <View style={styles.vibePadding}>
@@ -377,9 +380,9 @@ export default function SettingsScreen() {
           <SettingRow
             icon="📍"
             iconBg="#fef2f2"
-            label="Saved places"
-            sub="Home, work, and favourite spots"
-            onPress={() => Alert.alert("Saved places", "Saved places manager coming soon.")}
+            label={t("savedPlaces")}
+            sub={t("savedPlacesSub")}
+            onPress={() => Alert.alert(t("savedPlaces"), t("savedPlacesComingSoon"))}
             simplified={S}
           />
           <SettingRow
@@ -468,21 +471,21 @@ export default function SettingsScreen() {
         )}
 
         {/* ── SAFETY ────────────────────────────────────────────────────────── */}
-        <SectionLabel label="Safety" delay={200} />
+        <SectionLabel label={t("safety")} delay={200} />
         <Reanimated.View entering={FadeInDown.delay(220).springify()} style={styles.group}>
           <SettingRow
             icon="🛡️"
             iconBg="#f0fdf4"
-            label="Identity verification"
-            sub="Verify your ID for trust boost"
-            onPress={() => Alert.alert("Identity", "Complete Stripe Identity via the web portal or ask your operator.")}
+            label={t("identityVerification")}
+            sub={t("verifyIdForTrustBoost")}
+            onPress={() => Alert.alert(t("identity"), t("completeStripeIdentity"))}
             simplified={S}
           />
           <SettingRow
             icon="🎙️"
             iconBg="#eff6ff"
-            label="Audio recording consent"
-            sub="Encrypted, 24hr, dispute-only access"
+            label={t("audioRecordingConsent")}
+            sub={t("audioRecordingConsentSub")}
             simplified={S}
             rightEl={
               <Switch
@@ -499,8 +502,8 @@ export default function SettingsScreen() {
           <SettingRow
             icon="🆘"
             iconBg="#fef2f2"
-            label="SOS & emergency contacts"
-            sub="Contacts called if SOS triggered"
+            label={t("sosEmergencyContacts")}
+            sub={t("contactsCalledIfSosTriggered")}
             onPress={() => router.push("/sos")}
             simplified={S}
             last
@@ -508,13 +511,13 @@ export default function SettingsScreen() {
         </Reanimated.View>
 
         {/* ── ACCESSIBILITY ─────────────────────────────────────────────────── */}
-        <SectionLabel label="Accessibility" delay={240} />
+        <SectionLabel label={t("accessibility")} delay={240} />
         <Reanimated.View entering={FadeInDown.delay(260).springify()} style={styles.group}>
           <SettingRow
             icon="🔠"
             iconBg="#f0fdf4"
-            label="Simplified mode"
-            sub="Larger text, fewer options — great for all ages"
+            label={t("simplifiedMode")}
+            sub={t("simplifiedModeSub")}
             simplified={S}
             rightEl={
               <Switch
@@ -532,7 +535,7 @@ export default function SettingsScreen() {
         <SectionLabel label={t("language", "Language")} delay={280} />
         <Reanimated.View entering={FadeInDown.delay(300).springify()} style={styles.group}>
           <View style={styles.langWrap}>
-            {!S && <Text style={styles.langHint}>Choose your preferred language</Text>}
+            {!S && <Text style={styles.langHint}>{t("choosePreferredLanguage")}</Text>}
             <View style={styles.langRow}>
               {LANGS.map(({ code, label, flag }) => {
                 const active = currentLanguage === code;
@@ -555,46 +558,60 @@ export default function SettingsScreen() {
         </Reanimated.View>
 
         {/* ── ABOUT ─────────────────────────────────────────────────────────── */}
-        <SectionLabel label="About" delay={320} />
+        <SectionLabel label={t("about")} delay={320} />
         <Reanimated.View entering={FadeInDown.delay(340).springify()} style={styles.group}>
           <SettingRow
             icon="📖"
             iconBg="#f8fafc"
             label={t("helpFaq", "Help & FAQ")}
-            sub="Answers to common questions"
-            onPress={() => Alert.alert(t("help", "Help"), "Visit kindride.org/help for full documentation.")}
+            sub={t("answersToCommonQuestions")}
+            onPress={() => Alert.alert(t("help", "Help"), t("visitHelpDocumentation"))}
             simplified={S}
           />
           <SettingRow
             icon="🔒"
             iconBg="#f8fafc"
             label={t("privacyPolicy", "Privacy Policy")}
-            sub="How we handle your data"
-            onPress={() => Alert.alert("Privacy", "View our full policy at kindride.org/privacy.")}
+            sub={t("howWeHandleYourData")}
+            onPress={() => Alert.alert(t("privacy"), t("viewFullPrivacyPolicy"))}
             simplified={S}
           />
           <SettingRow
             icon="📄"
             iconBg="#f8fafc"
             label={t("termsOfService", "Terms of Service")}
-            onPress={() => Alert.alert("Terms", "View terms at kindride.org/terms.")}
+            onPress={() => Alert.alert(t("terms"), t("viewTermsAtKindride"))}
+            simplified={S}
+            last
+          />
+        </Reanimated.View>
+
+        {/* ── REFERRALS ─────────────────────────────────────────────────── */}
+        <SectionLabel label={t("community")} delay={360} />
+        <Reanimated.View entering={FadeInDown.delay(380).springify()} style={styles.group}>
+          <SettingRow
+            icon="🎁"
+            iconBg="#fefce8"
+            label={t("inviteFriends")}
+            sub={t("give50Get50")}
+            onPress={() => router.push("/referral")}
             simplified={S}
             last
           />
         </Reanimated.View>
 
         {/* ── Privacy mission card ─────────────────────────────────────────── */}
-        <Reanimated.View entering={FadeInDown.delay(360).springify()} style={styles.missionWrap}>
+        <Reanimated.View entering={FadeInDown.delay(400).springify()} style={styles.missionWrap}>
           <LinearGradient
             colors={["#0d9488", "#0369a1"]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
             style={styles.missionCard}
           >
-            <Text style={styles.missionEyebrow}>Our Promise</Text>
-            <Text style={styles.missionHeadline}>Privacy-first, always.</Text>
+            <Text style={styles.missionEyebrow}>{t("ourPromise")}</Text>
+            <Text style={styles.missionHeadline}>{t("privacyFirstAlways")}</Text>
             <Text style={styles.missionBody}>
-              KindRide never sells your data. Your location stays on your device until you choose to share a ride.
+              {t("kindrideNeverSellsData")}
             </Text>
           </LinearGradient>
         </Reanimated.View>
@@ -603,11 +620,11 @@ export default function SettingsScreen() {
         {user && (
           <>
             <View style={styles.dangerSpacer} />
-            <Reanimated.View entering={FadeInDown.delay(380).springify()} style={styles.dangerGroup}>
+            <Reanimated.View entering={FadeInDown.delay(420).springify()} style={styles.dangerGroup}>
               <SettingRow
                 icon="↩️"
                 iconBg="#fef2f2"
-                label={signingOut ? "Signing out…" : t("signOut", "Sign out")}
+                label={signingOut ? t("signingOut") : t("signOut", "Sign out")}
                 danger
                 simplified={S}
                 onPress={signingOut ? undefined : handleSignOut}
@@ -616,7 +633,7 @@ export default function SettingsScreen() {
                 icon="🗑️"
                 iconBg="#fef2f2"
                 label={t("deleteAccount", "Delete account")}
-                sub="Permanently removes all your data"
+                sub={t("permanentlyRemovesData")}
                 danger
                 simplified={S}
                 last
@@ -628,7 +645,7 @@ export default function SettingsScreen() {
 
         {/* ── Back link ────────────────────────────────────────────────────── */}
         <Link href="/(tabs)" style={styles.backLinkWrap}>
-          <Text style={[styles.backLinkText, S && { fontSize: 18 }]}>Back to home  →</Text>
+          <Text style={[styles.backLinkText, S && { fontSize: 18 }]}>{t("backToHome")}  →</Text>
         </Link>
 
       </ScrollView>

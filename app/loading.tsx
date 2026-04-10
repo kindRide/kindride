@@ -9,6 +9,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { useTranslation } from "react-i18next";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/lib/auth";
 
@@ -51,6 +52,7 @@ function LoadingDot({ delay }: { delay: number }) {
 
 // ─── Main loading screen ──────────────────────────────────────────────────────
 export default function LoadingScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const { loading } = useAuth();
 
@@ -113,7 +115,7 @@ export default function LoadingScreen() {
 
           {/* Tagline */}
           <Animated.Text style={[styles.tagline, { opacity: taglineAnim }]}>
-            Free rides. Real impact. Every time.
+            {t("freeRidesRealImpactEveryTime")}
           </Animated.Text>
 
           {/* Loading dots */}
@@ -127,7 +129,7 @@ export default function LoadingScreen() {
 
         {/* Bottom badge */}
         <Animated.View style={[styles.bottomBadge, { opacity: taglineAnim }]}>
-          <Text style={styles.bottomBadgeText}>🌱  Humanitarian · Community · Care</Text>
+          <Text style={styles.bottomBadgeText}>🌱  {t("humanitarianCommunityCare")}</Text>
         </Animated.View>
       </SafeAreaView>
     </View>

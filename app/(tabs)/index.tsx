@@ -13,7 +13,6 @@
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
@@ -25,6 +24,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useColorScheme,
   View,
 } from "react-native";
 import Animated, {
@@ -40,6 +40,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
+import { useTranslation } from "react-i18next";
 
 import { useAuth } from "@/lib/auth";
 import { getRecentDestinations, type RecentDestination } from "@/lib/recent-destinations";
@@ -154,6 +155,7 @@ function SkeletonHome() {
 
 // ─── Impact story card ────────────────────────────────────────────────────────
 function StoryCard({ story, active }: { story: typeof STORIES[number]; active: boolean }) {
+  const { t } = useTranslation();
   const scale = useSharedValue(1);
   useEffect(() => {
     scale.value = withSpring(active ? 1 : 0.96, { damping: 14, stiffness: 120 });
@@ -163,13 +165,13 @@ function StoryCard({ story, active }: { story: typeof STORIES[number]; active: b
     <Animated.View style={[styles.storyCard, { backgroundColor: story.tint, width: STORY_W }, animStyle]}>
       <View style={styles.storyTopRow}>
         <View style={[styles.storyDot, { backgroundColor: story.dot }]} />
-        <Text style={styles.storyName}>{story.name}</Text>
+        <Text style={styles.storyName}>{t(`homeStory.${story.key}.name`)}</Text>
         <View style={styles.storyPointsPill}>
-          <Text style={styles.storyPointsText}>+{story.points} pts</Text>
+          <Text style={styles.storyPointsText}>{t("storyPoints", { points: story.points })}</Text>
         </View>
       </View>
       <Text style={styles.storyEmoji}>{story.emoji}</Text>
-      <Text style={styles.storyText}>"{story.story}"</Text>
+      <Text style={styles.storyText}>{t(`homeStory.${story.key}.story`)}</Text>
     </Animated.View>
   );
 }
@@ -194,6 +196,10 @@ function SuggestionChip({ label, icon, onPress }: { label: string; icon: string;
 export default function HomeScreen() {
   const { user } = useAuth();
   const router = useRouter();
+  const { t } = useTranslation();
+  const colorScheme = useColorScheme();
+  const isDark = colorScheme === "dark";
+  const dm = isDark ? darkOverrides : {};
 
   const [loading, setLoading] = useState(true);
   const [recents, setRecents] = useState<RecentDestination[]>([]);
@@ -210,12 +216,12 @@ export default function HomeScreen() {
   // ── Derived ──────────────────────────────────────────────────────────────
   const name = (() => {
     const meta = user?.user_metadata;
-    const raw = meta?.full_name || meta?.name || user?.email?.split("@")[0] || user?.phone?.slice(-4) || "there";
+    const raw = meta?.full_name || meta?.name || user?.email?.split("@")[0] || user?.phone?.slice(-4) || t("thereFallback");
     return raw.split(/[\s._]/)[0];
   })();
 
   const hour = new Date().getHours();
-  const timeGreeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  const timeGreeting = hour < 12 ? t("goodMorning", "Good morning") : hour < 17 ? t("goodAfternoon", "Good afternoon") : t("goodEvening", "Good evening");
 
   // ── Load data ────────────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
@@ -320,7 +326,7 @@ export default function HomeScreen() {
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
-    <SafeAreaView style={styles.root} edges={["top"]}>
+    <SafeAreaView style={[styles.root, dm.root]} edges={["top"]}>
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: 52 }}
@@ -351,7 +357,7 @@ export default function HomeScreen() {
             {/* Live pulse + community count */}
             <Animated.View entering={FadeIn.delay(200)} style={styles.liveRow}>
               <Animated.View style={[styles.liveDot, pulseStyle]} />
-              <Text style={styles.liveText}>{communityCount.toLocaleString()} rides given this month</Text>
+              <Text style={styles.liveText}>{communityCount.toLocaleString()} {t("ridesGivenThisMonth", "rides given this month")}</Text>
             </Animated.View>
 
             {/* Greeting */}
@@ -366,10 +372,10 @@ export default function HomeScreen() {
                 style={styles.searchTouchable}
                 onPress={() => goToRide()}
                 accessibilityRole="search"
-                accessibilityLabel="Search destination"
+                accessibilityLabel={t("searchDestination")}
               >
                 <View style={styles.searchDot} />
-                <Text style={styles.searchPlaceholder}>Where to?</Text>
+                <Text style={styles.searchPlaceholder}>{t("whereTo", "Where to?")}</Text>
                 <Pressable
                   style={styles.micBtn}
                   onPress={() => {
@@ -377,7 +383,7 @@ export default function HomeScreen() {
                     // Voice input — wired to expo-av in future sprint
                     goToRide();
                   }}
-                  accessibilityLabel="Voice search"
+                  accessibilityLabel={t("voiceSearch")}
                 >
                   <Text style={styles.micIcon}>🎙️</Text>
                 </Pressable>
@@ -389,7 +395,7 @@ export default function HomeScreen() {
               <Animated.View entering={FadeIn.delay(300)} style={styles.homeChipRow}>
                 <SuggestionChip
                   icon="🏠"
-                  label="Take Me Home"
+                  label={t("takeMeHome", "Take Me Home")}
                   onPress={() => goToRide({
                     prefillLabel: homeLocation.label,
                     prefillLat: String(homeLocation.latitude),
@@ -432,7 +438,7 @@ export default function HomeScreen() {
             onPress={() => goToRide()}
             style={({ pressed }) => [styles.rideCard, pressed && styles.rideCardPressed]}
             accessibilityRole="button"
-            accessibilityLabel="Get a ride"
+            accessibilityLabel={t("getRide")}
           >
             <LinearGradient
               colors={["#1a56db", "#0e7490"]}
@@ -441,9 +447,9 @@ export default function HomeScreen() {
               style={styles.rideCardGradient}
             >
               <View>
-                <Text style={styles.rideEyebrow}>GET A RIDE</Text>
-                <Text style={styles.rideTitle}>Book your trip</Text>
-                <Text style={styles.rideSub}>Free · Verified · Safe</Text>
+                <Text style={styles.rideEyebrow}>{t("getARideEyebrow", "GET A RIDE")}</Text>
+                <Text style={styles.rideTitle}>{t("bookYourTrip", "Book your trip")}</Text>
+                <Text style={styles.rideSub}>{t("freeVerifiedSafe", "Free · Verified · Safe")}</Text>
               </View>
               <View style={styles.rideIconWrap}>
                 <Text style={styles.rideIcon}>🚗</Text>
@@ -463,8 +469,8 @@ export default function HomeScreen() {
             <View style={[styles.secondaryIconWrap, { backgroundColor: "#f0fdfa" }]}>
               <Text style={styles.secondaryIcon}>🙌</Text>
             </View>
-            <Text style={styles.secondaryTitle}>Drive</Text>
-            <Text style={styles.secondarySub}>Earn kind points</Text>
+            <Text style={styles.secondaryTitle}>{t("drive", "Drive")}</Text>
+            <Text style={styles.secondarySub}>{t("earnKindPoints", "Earn kind points")}</Text>
           </Pressable>
 
           {/* Points */}
@@ -476,16 +482,16 @@ export default function HomeScreen() {
             <View style={[styles.secondaryIconWrap, { backgroundColor: "#fefce8" }]}>
               <Text style={styles.secondaryIcon}>⭐</Text>
             </View>
-            <Text style={styles.secondaryTitle}>Points</Text>
-            <Text style={styles.secondarySub}>My impact</Text>
+            <Text style={styles.secondaryTitle}>{t("points", "Points")}</Text>
+            <Text style={styles.secondarySub}>{t("myImpact", "My impact")}</Text>
           </Pressable>
         </Animated.View>
 
         {/* ── IMPACT STORIES — auto-rotating ────────────────────────────── */}
         <Animated.View entering={FadeInDown.delay(280).springify()}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Community Stories</Text>
-            <Text style={styles.sectionSub}>This week · Real people</Text>
+            <Text style={styles.sectionTitle}>{t("communityStories", "Community Stories")}</Text>
+            <Text style={styles.sectionSub}>{t("thisWeekRealPeople", "This week · Real people")}</Text>
           </View>
 
           <ScrollView
@@ -521,7 +527,7 @@ export default function HomeScreen() {
         {(recentEvents.length > 0 || recents.length > 0) && (
           <Animated.View entering={FadeInDown.delay(340).springify()}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Recent Activity</Text>
+              <Text style={styles.sectionTitle}>{t("recentActivity", "Recent Activity")}</Text>
             </View>
             <View style={styles.recentsCard}>
               {recentEvents.length > 0
@@ -572,10 +578,10 @@ export default function HomeScreen() {
             end={{ x: 1, y: 0 }}
             style={styles.missionCard}
           >
-            <Text style={styles.missionEyebrow}>Our Promise</Text>
-            <Text style={styles.missionHeadline}>Kindness is the engine.</Text>
+            <Text style={styles.missionEyebrow}>{t("ourPromise", "Our Promise")}</Text>
+            <Text style={styles.missionHeadline}>{t("kindnessIsEngine", "Kindness is the engine.")}</Text>
             <Text style={styles.missionBody}>
-              No surge pricing. No algorithms. Just humans helping humans get where they need to go.
+              {t("noSurgePricing", "No surge pricing. No algorithms. Just humans helping humans get where they need to go.")}
             </Text>
           </LinearGradient>
         </Animated.View>
@@ -595,6 +601,11 @@ const shadow = Platform.select({
 const shadowSm = Platform.select({
   ios: { shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 6 },
   android: { elevation: 2 },
+});
+
+// Dark mode overrides — applied on top of base styles when system is in dark mode
+const darkOverrides = StyleSheet.create({
+  root: { backgroundColor: "#0f172a" },
 });
 
 const styles = StyleSheet.create({

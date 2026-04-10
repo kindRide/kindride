@@ -1,12 +1,14 @@
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from "expo-camera";
 import { useState, useEffect, useRef } from "react";
 import { Alert, Pressable, StyleSheet, Text, View, Animated } from "react-native";
+import { useTranslation } from "react-i18next";
 import { supabase } from "@/lib/supabase";
 import { getRideStatusUrlOrNull } from "@/lib/backend-api-urls";
 
 type Props = { isActive: boolean; rideId: string };
 
 export default function SessionRecorder({ isActive, rideId }: Props) {
+  const { t } = useTranslation();
   const [permission, requestPermission] = useCameraPermissions();
   const [micPermission, requestMicPermission] = useMicrophonePermissions();
   const [flagged, setFlagged] = useState(false);
@@ -130,7 +132,7 @@ export default function SessionRecorder({ isActive, rideId }: Props) {
             await requestMicPermission();
           }}
         >
-          <Text style={styles.btnText}>Enable Recording</Text>
+          <Text style={styles.btnText}>{t("enableRecording")}</Text>
         </Pressable>
       </View>
     );
@@ -147,11 +149,11 @@ export default function SessionRecorder({ isActive, rideId }: Props) {
         />
         {/* Semi-transparent top bar — does NOT cover the live preview */}
         <View style={styles.recordingBar}>
-          <Text style={styles.recordingBarText}>🔴  Recording — stored securely</Text>
+          <Text style={styles.recordingBarText}>🔴  {t("recordingStoredSecurely")}</Text>
         </View>
         <View style={styles.badge}>
           <Animated.View style={[styles.recDot, { opacity: blinkAnim }]} />
-          <Text style={styles.recLabel}>REC</Text>
+          <Text style={styles.recLabel}>{t("rec")}</Text>
         </View>
       </View>
       <Pressable

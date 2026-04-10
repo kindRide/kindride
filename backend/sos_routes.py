@@ -4,13 +4,12 @@ Isolated module for emergency request handling.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 import httpx
 import os
-import threading
 
 try:
     from slowapi import Limiter
@@ -32,28 +31,52 @@ TWILIO_FROM_PHONE_NUMBER = os.getenv("TWILIO_FROM_PHONE_NUMBER", "").strip()
 TWILIO_AVAILABLE = bool(TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_PHONE_NUMBER)
 
 # ── M6 SOS Spam Protection ────────────────────────────────────────────────────
-# Per-user in-memory cooldown. Prevents a user triggering SOS repeatedly within
-# 60 seconds — stops accidental or malicious SMS spam to emergency contacts.
-# In a multi-process deployment, move this to Redis. Fine for single-process.
+# Cooldown is enforced via the database (sos_requests.created_at), not an
+# in-memory dict, so it works correctly across multiple workers / load-balanced
+# deployments. The old threading.Lock approach would silently fail under
+# Gunicorn multi-process or Kubernetes multi-pod setups.
 _SOS_COOLDOWN_SECONDS = 60
-_sos_last_trigger: dict[str, datetime] = {}   # user_id -> last trigger time
-_sos_lock = threading.Lock()
 
 
-def _check_and_set_sos_cooldown(user_id: str) -> None:
-    """Raises 429 if the user triggered SOS within the last 60 seconds."""
-    now = datetime.now(timezone.utc)
-    with _sos_lock:
-        last = _sos_last_trigger.get(user_id)
-        if last is not None:
-            elapsed = (now - last).total_seconds()
-            if elapsed < _SOS_COOLDOWN_SECONDS:
+def _check_sos_cooldown_db(client: httpx.Client, user_id: str) -> None:
+    """
+    Raises 429 if the user has an sos_requests row created within the last
+    60 seconds. Uses the database as the source of truth so this check is
+    consistent across all worker processes.
+    """
+    from main import _service_headers, _rest_url
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=_SOS_COOLDOWN_SECONDS)).isoformat()
+    try:
+        r = client.get(
+            _rest_url("/sos_requests"),
+            params={
+                "user_id": f"eq.{user_id}",
+                "created_at": f"gte.{cutoff}",
+                "select": "created_at",
+                "order": "created_at.desc",
+                "limit": "1",
+            },
+            headers=_service_headers(),
+            timeout=10.0,
+        )
+        if r.status_code == 200:
+            rows = r.json() if isinstance(r.json(), list) else []
+            if rows:
+                last_ts = datetime.fromisoformat(rows[0]["created_at"].replace("Z", "+00:00"))
+                elapsed = (datetime.now(timezone.utc) - last_ts).total_seconds()
                 remaining = int(_SOS_COOLDOWN_SECONDS - elapsed)
-                raise HTTPException(
-                    status_code=429,
-                    detail=f"SOS cooldown active. Please wait {remaining}s before triggering again.",
-                )
-        _sos_last_trigger[user_id] = now
+                if remaining > 0:
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"SOS cooldown active. Please wait {remaining}s before triggering again.",
+                    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        # If the DB check itself fails, log and allow through — never silently
+        # block a genuine emergency because of a transient DB error.
+        logger.warning("SOS cooldown DB check failed (allowing through): %s", e)
 # ── End M6 ───────────────────────────────────────────────────────────────────
 
 
@@ -86,8 +109,9 @@ def send_sos(
         _require_config()
         user_id = _verify_user_bearer_token(authorization)
 
-        # M6: enforce per-user 60-second cooldown before any SMS is sent
-        _check_and_set_sos_cooldown(user_id)
+        # M6: enforce per-user 60-second cooldown via DB (works across all workers)
+        with httpx.Client() as cooldown_client:
+            _check_sos_cooldown_db(cooldown_client, user_id)
 
         logger.warning(
             "SOS ALERT triggered",
