@@ -883,19 +883,25 @@ export default function RideRequestScreen() {
                     return;
                   }
                   // Proceed as single-leg only (no background handoff search).
+                  // Route through driver-intro first so passenger sees who is coming.
                   router.push({
-                    pathname: "/active-trip",
+                    pathname: "/driver-intro",
                     params: {
-                      rideId: sessionRideId,
-                      driverId: item.id,
                       driverName: item.name,
-                      wasZeroDetour: item.intent === "already_going" ? "true" : "false",
-                      needsHandoff: "false",
-                      destinationDirection: computedDirection,
-                      destinationLat: String(destination.latitude),
-                      destinationLng: String(destination.longitude),
-                      destinationLabel: destination.label,
-                      ...(passengerId ? { passengerId } : {}),
+                      driverId: item.id,
+                      rideId: sessionRideId,
+                      activeTripParams: JSON.stringify({
+                        rideId: sessionRideId,
+                        driverId: item.id,
+                        driverName: item.name,
+                        wasZeroDetour: item.intent === "already_going" ? "true" : "false",
+                        needsHandoff: "false",
+                        destinationDirection: computedDirection,
+                        destinationLat: String(destination.latitude),
+                        destinationLng: String(destination.longitude),
+                        destinationLabel: destination.label,
+                        ...(passengerId ? { passengerId } : {}),
+                      }),
                     },
                   });
                   return;
@@ -919,27 +925,34 @@ export default function RideRequestScreen() {
             }
             const acceptedDriver = acceptanceResult.assignedDriver ?? item;
 
+            // Route through driver-intro before active-trip so passenger sees
+            // who is coming, safety stats, and a fun fact about the driver.
             router.push({
-              pathname: "/active-trip",
+              pathname: "/driver-intro",
               params: {
-                rideId: sessionRideId,
-                driverId: acceptedDriver.id,
                 driverName: acceptedDriver.name,
-                wasZeroDetour: acceptedDriver.intent === "already_going" ? "true" : "false",
-                needsHandoff: needsHandoff ? "true" : "false",
-                destinationDirection: computedDirection,
-                destinationLat: String(destination.latitude),
-                destinationLng: String(destination.longitude),
-                destinationLabel: destination.label,
-                ...(effectiveDriverB
-                  ? {
-                      preMatchedNextDriverId: effectiveDriverB.id,
-                      preMatchedNextDriverName: effectiveDriverB.name,
-                      preMatchedNextDriverEtaMinutes: String(effectiveDriverB.etaMinutes),
-                      preMatchedNextDriverHeading: effectiveDriverB.headingDirection,
-                    }
-                  : {}),
-                ...(passengerId ? { passengerId } : {}),
+                driverId: acceptedDriver.id,
+                rideId: sessionRideId,
+                activeTripParams: JSON.stringify({
+                  rideId: sessionRideId,
+                  driverId: acceptedDriver.id,
+                  driverName: acceptedDriver.name,
+                  wasZeroDetour: acceptedDriver.intent === "already_going" ? "true" : "false",
+                  needsHandoff: needsHandoff ? "true" : "false",
+                  destinationDirection: computedDirection,
+                  destinationLat: String(destination.latitude),
+                  destinationLng: String(destination.longitude),
+                  destinationLabel: destination.label,
+                  ...(effectiveDriverB
+                    ? {
+                        preMatchedNextDriverId: effectiveDriverB.id,
+                        preMatchedNextDriverName: effectiveDriverB.name,
+                        preMatchedNextDriverEtaMinutes: String(effectiveDriverB.etaMinutes),
+                        preMatchedNextDriverHeading: effectiveDriverB.headingDirection,
+                      }
+                    : {}),
+                  ...(passengerId ? { passengerId } : {}),
+                }),
               },
             });
           }}

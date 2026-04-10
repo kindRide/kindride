@@ -30,14 +30,23 @@ export default function DriverIntroScreen() {
     rideId?: string;
     rating?: string;
     yearsActive?: string;
-    nextPath?: string;
+    // JSON-encoded params object forwarded to /active-trip on continue
+    activeTripParams?: string;
   }>();
 
   const driverName = params.driverName ?? t("yourDriver");
   const driverId = params.driverId ?? "";
   const rating = parseFloat(params.rating ?? "5.0");
   const yearsActive = parseInt(params.yearsActive ?? "2", 10);
-  const nextPath = (params.nextPath as string) ?? "/(tabs)";
+
+  // Parse forwarded active-trip params (set by ride-request at match time)
+  const activeTripParams = useMemo<Record<string, string>>(() => {
+    try {
+      return params.activeTripParams ? JSON.parse(params.activeTripParams) : {};
+    } catch {
+      return {};
+    }
+  }, [params.activeTripParams]);
 
   // Stable fun fact per driver (deterministic by driverId chars)
   const funFactKey = useMemo(() => {
@@ -53,7 +62,11 @@ export default function DriverIntroScreen() {
 
   const handleContinue = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.replace(nextPath as any);
+    if (Object.keys(activeTripParams).length > 0) {
+      router.replace({ pathname: "/active-trip", params: activeTripParams });
+    } else {
+      router.replace("/(tabs)");
+    }
   };
 
   return (
