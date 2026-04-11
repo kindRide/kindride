@@ -481,19 +481,19 @@ export default function PointsScreen() {
 
         {/* ── Leaderboard teaser ───────────────────────────────────────────────── */}
         <Reanimated.View entering={FadeInDown.delay(180).springify()} style={styles.leaderboardTeaser}>
-          <LinearGradient
-            colors={["#1e1b4b", "#2e1065"]}
-            style={styles.leaderboardGradient}
-          >
-            <Text style={styles.leaderboardIcon}>📊</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.leaderboardTitle}>{t("weeklyLeaderboard")}</Text>
-              <Text style={styles.leaderboardSub}>{t("cityRankingsComingSoon")}</Text>
-            </View>
-            <View style={styles.leaderboardComingSoon}>
-              <Text style={styles.leaderboardComingSoonText}>{t("soon")}</Text>
-            </View>
-          </LinearGradient>
+          <Pressable onPress={() => router.push("/leaderboard")}>
+            <LinearGradient
+              colors={["#1e1b4b", "#2e1065"]}
+              style={styles.leaderboardGradient}
+            >
+              <Text style={styles.leaderboardIcon}>📊</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.leaderboardTitle}>{t("weeklyLeaderboard")}</Text>
+                <Text style={styles.leaderboardSub}>{t("cityRankingsComingSoon")}</Text>
+              </View>
+              <Text style={styles.leaderboardChevron}>→</Text>
+            </LinearGradient>
+          </Pressable>
         </Reanimated.View>
 
         {/* ── Redemption options ───────────────────────────────────────────────── */}
@@ -768,6 +768,7 @@ const styles = StyleSheet.create({
     borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5,
   },
   leaderboardComingSoonText: { fontSize: 11, fontWeight: "700", color: "#c4b5fd" },
+  leaderboardChevron: { fontSize: 18, color: "rgba(255,255,255,0.6)", fontWeight: "700" },
 
   // ── Redemption grid
   redemptionGrid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: 12, gap: 10 },

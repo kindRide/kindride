@@ -38,6 +38,9 @@ export default function LeaderboardScreen() {
           start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
           style={styles.hero}
         >
+          <Pressable onPress={() => router.back()} style={styles.backBtn}>
+            <Text style={styles.backBtnText}>← {t("back", "Back")}</Text>
+          </Pressable>
           <Reanimated.View entering={FadeInDown.delay(0).springify()}>
             <Text style={styles.heroEyebrow}>📊 {t("weeklyCityLeaderboard")}</Text>
             <Text style={styles.heroTitle}>{t("topKindDrivers")}</Text>
@@ -112,7 +115,9 @@ export default function LeaderboardScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#f8fafc" },
-  hero: { paddingTop: 24, paddingBottom: 32, paddingHorizontal: 20 },
+  hero: { paddingTop: 16, paddingBottom: 32, paddingHorizontal: 20 },
+  backBtn: { marginBottom: 12, alignSelf: "flex-start" },
+  backBtnText: { color: "rgba(255,255,255,0.65)", fontSize: 14, fontWeight: "600" },
   heroEyebrow: { color: "#a5b4fc", fontSize: 11, fontWeight: "700", letterSpacing: 1.2, marginBottom: 8 },
   heroTitle: { color: "#ffffff", fontSize: 28, fontWeight: "800" },
   heroSub: { color: "rgba(255,255,255,0.55)", fontSize: 12, marginTop: 4, marginBottom: 24 },
