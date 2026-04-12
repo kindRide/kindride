@@ -5,6 +5,5 @@ httpx
 PyJWT
 cryptography
 python-dotenv
-expo-push-notifications
 twilio
 slowapi
