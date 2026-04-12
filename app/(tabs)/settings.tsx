@@ -590,6 +590,14 @@ export default function SettingsScreen() {
         <SectionLabel label={t("community")} delay={360} />
         <Reanimated.View entering={FadeInDown.delay(380).springify()} style={styles.group}>
           <SettingRow
+            icon="🪪"
+            iconBg="#eff6ff"
+            label={t("myQrProfile", "My QR Profile")}
+            sub={t("myQrProfileSub", "Share your profile at Hub meetups")}
+            onPress={() => router.push("/qr-profile")}
+            simplified={S}
+          />
+          <SettingRow
             icon="🎁"
             iconBg="#fefce8"
             label={t("inviteFriends")}

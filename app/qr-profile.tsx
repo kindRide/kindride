@@ -1,13 +1,16 @@
-import { useRouter } from "expo-router";
-import { Share, StyleSheet, Text, View, Pressable } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
+import * as Linking from "expo-linking";
+import { useRouter } from "expo-router";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { Pressable, Share, StyleSheet, Text, View } from "react-native";
 import QRCode from "react-native-qrcode-svg";
 import Reanimated, { FadeIn, FadeInDown, FadeInUp } from "react-native-reanimated";
-import * as Haptics from "expo-haptics";
-import { useTranslation } from "react-i18next";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/lib/auth";
+import { supabase } from "@/lib/supabase";
 
 export default function QRProfileScreen() {
   const router = useRouter();
@@ -16,10 +19,44 @@ export default function QRProfileScreen() {
 
   const userId = session?.user?.id ?? "guest";
   const email = session?.user?.email ?? "";
-  const initial = email ? email.charAt(0).toUpperCase() : "K";
+  
+  const [profileName, setProfileName] = useState<string>("");
+  const [stats, setStats] = useState<{ points: number; tier: string } | null>(null);
 
   // Deep-link URL that opens the user's profile when scanned
-  const profileUrl = `kindride://profile/${userId}`;
+  // Using expo-linking automatically handles exp:// in dev and https:// in prod (fixes Security Issue M3)
+  const profileUrl = Linking.createURL(`profile/${userId}`);
+
+  useEffect(() => {
+    if (!supabase || userId === "guest") return;
+
+    async function loadProfile() {
+      try {
+        const { data: presence } = await supabase!
+          .from("driver_presence")
+          .select("display_name")
+          .eq("driver_id", userId)
+          .single();
+
+        if (presence?.display_name) setProfileName(presence.display_name);
+
+        const { data: pts } = await supabase!
+          .from("points")
+          .select("total_points, tier")
+          .eq("driver_id", userId)
+          .single();
+
+        if (pts) setStats({ points: pts.total_points, tier: pts.tier });
+      } catch (error) {
+        console.log("Could not load full profile for QR", error);
+      }
+    }
+
+    void loadProfile();
+  }, [userId]);
+
+  const displayName = profileName || email || t("kindrideMember");
+  const initial = displayName.charAt(0).toUpperCase() || "K";
 
   const handleShare = async () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -44,8 +81,12 @@ export default function QRProfileScreen() {
               <Text style={styles.avatarInitial}>{initial}</Text>
             </LinearGradient>
             <View>
-              <Text style={styles.heroName}>{email || t("kindrideMember")}</Text>
-              <Text style={styles.heroSub}>{t("scanToConnect")}</Text>
+              <Text style={styles.heroName}>{displayName}</Text>
+              {stats ? (
+                <Text style={styles.heroSub}>{stats.tier} · {stats.points.toLocaleString()} pts</Text>
+              ) : (
+                <Text style={styles.heroSub}>{t("scanToConnect")}</Text>
+              )}
             </View>
           </View>
         </Reanimated.View>
