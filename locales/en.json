@@ -671,5 +671,13 @@
   "impactScore": "Impact Score",
   "recordingStoredSecurely": "Recording — stored securely",
   "rec": "REC",
-  "flagTrip": "Flag Trip"
+  "flagTrip": "Flag Trip",
+  "publicDriverProfile": "PUBLIC DRIVER PROFILE",
+  "profileNotFound": "Profile not found",
+  "profileNotFoundSub": "This profile doesn't exist or has been removed.",
+  "backToApp": "Back to app",
+  "driverTier": "Tier",
+  "kindDriver": "Kind Driver",
+  "joinToConnect": "Want to connect with this driver?",
+  "joinToConnectBody": "Download KindRide — a free humanitarian rideshare app — to request a ride or connect with kind drivers in your city."
 }

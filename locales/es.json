@@ -670,5 +670,13 @@
   "impactScore": "Puntuación de impacto",
   "recordingStoredSecurely": "Grabación: almacenada de forma segura",
   "rec": "REC",
-  "flagTrip": "Marcar viaje"
+  "flagTrip": "Marcar viaje",
+  "publicDriverProfile": "PERFIL PÚBLICO DEL CONDUCTOR",
+  "profileNotFound": "Perfil no encontrado",
+  "profileNotFoundSub": "Este perfil no existe o ha sido eliminado.",
+  "backToApp": "Volver a la app",
+  "driverTier": "Nivel",
+  "kindDriver": "Conductor solidario",
+  "joinToConnect": "¿Quieres conectarte con este conductor?",
+  "joinToConnectBody": "Descarga KindRide — una app gratuita de transporte humanitario — para solicitar un viaje o conectarte con conductores solidarios en tu ciudad."
 }

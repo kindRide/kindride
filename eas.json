@@ -19,7 +19,8 @@
       "distribution": "internal",
       "channel": "preview",
       "env": {
-        "EXPO_PUBLIC_POINTS_REQUIRE_BACKEND": "true"
+        "EXPO_PUBLIC_POINTS_REQUIRE_BACKEND": "true",
+        "EXPO_PUBLIC_POINTS_API_URL": "https://kindride-api.onrender.com/points/award"
       },
       "android": {
         "buildType": "apk"
