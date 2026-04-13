@@ -33,6 +33,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import * as Location from "expo-location";
 import { Audio } from "expo-av";
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
 import {
   getConnectOnboardUrlOrNull,
   getConnectStatusUrlOrNull,
@@ -40,6 +42,7 @@ import {
   getRidesRespondUrlOrNull,
   getRideStatusUrlOrNull,
 } from "@/lib/backend-api-urls";
+import { DRIVER_ONBOARDING_KEY } from "@/app/driver-onboarding";
 import { savePendingPassengerRating } from "@/lib/driver-pending-passenger-rating";
 import { registerRouteCommitment } from "@/lib/route-commitment";
 import { supabase } from "@/lib/supabase";
@@ -404,12 +407,18 @@ export default function DriverDashboardScreen() {
   // ── Auth listener
   useEffect(() => {
     if (!supabase) return;
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(async ({ data }) => {
       setSession(data.session);
       if (data.session?.user) {
         const meta = data.session.user.user_metadata;
         const fallback = data.session.user.phone || data.session.user.email?.split("@")[0] || "Driver";
         setDisplayName(meta?.full_name || meta?.name || fallback);
+        // Show driver onboarding walkthrough on first visit
+        const done = await AsyncStorage.getItem(DRIVER_ONBOARDING_KEY);
+        if (!done) {
+          router.replace("/driver-onboarding");
+          return;
+        }
       }
     });
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, newSession) => {
