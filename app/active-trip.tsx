@@ -133,7 +133,7 @@ export default function ActiveTripScreen() {
     setNextDriver({
       id,
       name,
-      tier: t("helperTier"),
+      tier: "Helper" as const,
       etaMinutes,
       distanceMiles: 0,
       intent: "already_going",
@@ -295,7 +295,7 @@ export default function ActiveTripScreen() {
             is_available: false, // Hide from matching while in an active trip
             display_name: driverName,
             heading_direction: destinationDirection
-          }).catch(() => {});
+          }).then(() => {}, () => {});
         }
       );
     }
@@ -307,26 +307,43 @@ export default function ActiveTripScreen() {
     };
   }, [currentUserId, driverId, driverName, destinationDirection]);
 
-  // Live GPS Poller: If current user is the passenger, pull the driver's location rapidly
+  // Live GPS: If current user is the passenger, subscribe via Realtime for instant driver location
   useEffect(() => {
-    if (!currentUserId || currentUserId === driverId || !driverId) return;
-    let cancelled = false;
-    const poll = async () => {
-      if (cancelled || !supabase) return;
-      const { data } = await supabase
-        .from("driver_presence")
-        .select("current_lat, current_lng")
-        .eq("driver_id", driverId)
-        .single();
-      if (data && !cancelled && data.current_lat && data.current_lng) {
-        setLiveDriverLocation({ latitude: data.current_lat, longitude: data.current_lng });
-      }
-    };
-    poll();
-    const intervalId = setInterval(poll, 4000);
+    if (!currentUserId || currentUserId === driverId || !driverId || !supabase) return;
+
+    // Initial fetch so there's no blank period before the first realtime event
+    supabase
+      .from("driver_presence")
+      .select("current_lat, current_lng")
+      .eq("driver_id", driverId)
+      .single()
+      .then(({ data }) => {
+        if (data?.current_lat && data?.current_lng) {
+          setLiveDriverLocation({ latitude: data.current_lat, longitude: data.current_lng });
+        }
+      });
+
+    const channel = supabase
+      .channel(`driver-location-${driverId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "driver_presence",
+          filter: `driver_id=eq.${driverId}`,
+        },
+        (payload) => {
+          const row = payload.new as { current_lat?: number; current_lng?: number };
+          if (row.current_lat && row.current_lng) {
+            setLiveDriverLocation({ latitude: row.current_lat, longitude: row.current_lng });
+          }
+        }
+      )
+      .subscribe();
+
     return () => {
-      cancelled = true;
-      clearInterval(intervalId);
+      supabase.removeChannel(channel);
     };
   }, [currentUserId, driverId]);
 
@@ -520,7 +537,7 @@ export default function ActiveTripScreen() {
       };
     }
     return { latitude: 37.78, longitude: -122.4, latitudeDelta: 0.12, longitudeDelta: 0.12 };
-  }, [pickupPoint, dropoffPoint]);
+  }, [pickupPoint, dropoffPoint, liveDriverLocation]);
 
   const shareTrip = async () => {
     if (!rideId) {
@@ -628,6 +645,26 @@ export default function ActiveTripScreen() {
             {t("destination", { dest: destinationLabel ? destinationLabel : `${destinationLat}, ${destinationLng}` })}
           </Text>
         ) : null}
+        {/* Live driver proximity banner — only shown to passenger while driver is en route */}
+        {liveDriverLocation && pickupPoint && currentUserId !== driverId && (
+          (() => {
+            const distMi = haversineMiles(liveDriverLocation, pickupPoint);
+            const etaMins = Math.max(1, Math.round(distMi / 0.3)); // ~18 mph city speed
+            return (
+              <View style={styles.liveEtaBanner}>
+                <Text style={styles.liveEtaDot}>🚗</Text>
+                <Text style={styles.liveEtaText}>
+                  {distMi < 0.1
+                    ? t("driverArrivingNow", "Driver arriving now!")
+                    : t("driverDistanceAway", "Driver is {{dist}} mi away · ~{{eta}} min", {
+                        dist: distMi.toFixed(1),
+                        eta: etaMins,
+                      })}
+                </Text>
+              </View>
+            );
+          })()
+        )}
         <Text style={styles.driverName}>{t("driverName", { name: driverName })}</Text>
         <Text style={styles.meta}>{t("carInfo")}</Text>
         <Text style={styles.meta}>{t("etaToPickup")}</Text>
@@ -961,6 +998,20 @@ const styles = StyleSheet.create({
     color: "#0f766e",
     marginBottom: 6,
   },
+  liveEtaBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#eff6ff",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#bfdbfe",
+  },
+  liveEtaDot: { fontSize: 18 },
+  liveEtaText: { fontSize: 14, fontWeight: "700", color: "#1d4ed8", flex: 1 },
   driverName: {
     fontSize: 18,
     fontWeight: "700",

@@ -715,6 +715,9 @@
   "onbSkip": "Skip walkthrough",
   "onbStartDriving": "Start driving  →",
   "faqTitle": "Frequently Asked Questions",
+  "driverArrivingNow": "Driver arriving now!",
+  "driverDistanceAway": "Driver is {{dist}} mi away · ~{{eta}} min",
+
   "faqQ1": "What is KindRide and how is it free?",
   "faqA1": "KindRide is a free humanitarian rideshare app — no fares, no surge pricing, no hidden fees. Drivers give rides voluntarily to people in their community. The app is sustained by optional tips passengers leave for drivers, community partnerships, and grant funding. KindRide takes nothing from tips.",
   "faqQ2": "How do I get a ride?",
