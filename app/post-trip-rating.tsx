@@ -1,5 +1,6 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert, KeyboardAvoidingView, Platform, Pressable,
   ScrollView, Share, StyleSheet, Text, TextInput, View,
@@ -114,6 +115,44 @@ export default function PostTripRatingScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isEndingJourney, setIsEndingJourney] = useState(false);
   const [isRegisteringJourney, setIsRegisteringJourney] = useState(false);
+
+  // Share prompt — shown on first ride, then every 5th
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [showSharePrompt, setShowSharePrompt] = useState(false);
+  const [shareDismissed, setShareDismissed] = useState(false);
+
+  useEffect(() => {
+    supabase?.auth.getSession().then(({ data }) => {
+      setCurrentUserId(data.session?.user?.id ?? null);
+    });
+    AsyncStorage.getItem("kindride_share_count").then((val) => {
+      const count = parseInt(val ?? "0", 10);
+      if (count === 0 || count % 5 === 0) setShowSharePrompt(true);
+    });
+  }, []);
+
+  const handleShare = async (role: "driver" | "passenger") => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const msg =
+      role === "driver"
+        ? t("shareDriverMessage", {
+            defaultValue:
+              "Just helped someone get home — completely free 🌱\nNo fare. No catch. Just a neighbour helping a neighbour.\n\nThis is what KindRide is about. Together, let's build a world of kindness 💙\n\nkindride.app",
+          })
+        : t("sharePassengerMessage", {
+            driverName,
+            defaultValue: `Someone just gave me a completely free ride today 🙏\nShoutout to my amazing KindRide driver — proof that good people still exist.\n\nIf they can give, maybe I can too. Join the movement 🌱\n\nkindride.app`,
+          });
+    try {
+      await Share.share({ message: msg, title: "KindRide" });
+      const val = await AsyncStorage.getItem("kindride_share_count");
+      const next = parseInt(val ?? "0", 10) + 1;
+      await AsyncStorage.setItem("kindride_share_count", String(next));
+    } catch {
+      // user cancelled — fine
+    }
+    setShareDismissed(true);
+  };
 
   // Tip state
   const { initPaymentSheet, presentPaymentSheet } = useStripe();
@@ -482,42 +521,38 @@ export default function PostTripRatingScreen() {
                 </Pressable>
               </Reanimated.View>
 
-              {/* ── Shareable ride card ─────────────────────────────────── */}
-              <Reanimated.View entering={FadeInUp.delay(200).springify()} style={styles.shareWrap}>
-                <LinearGradient
-                  colors={["#0c1f3f", "#0a5c54"]}
-                  start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                  style={styles.shareCard}
-                >
-                  <Text style={styles.shareCardBrand}>KindRide 💙</Text>
-                  <Text style={styles.shareCardTitle}>{t("shareCardCompletedKindRide")}</Text>
-                  {completedLegMiles > 0 && (
-                    <Text style={styles.shareCardStat}>
-                      {t("shareCardMilesPoints", { miles: completedLegMiles.toFixed(1), points: earnedPoints })}
-                    </Text>
-                  )}
-                  {selectedTags.length > 0 && (
-                    <Text style={styles.shareCardTags}>{selectedTags.join(" · ")}</Text>
-                  )}
-                  <Text style={styles.shareCardCta}>{t("everyRideBuildsCommunity")}</Text>
-                </LinearGradient>
-                <Pressable
-                  style={styles.shareBtn}
-                  onPress={async () => {
-                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    await Share.share({
-                      message: t("shareRideMessage", {
-                        stats: completedLegMiles > 0
-                          ? t("shareRideStats", { miles: completedLegMiles.toFixed(1), points: earnedPoints })
-                          : "",
-                      }),
-                      title: t("shareRideTitle"),
-                    });
-                  }}
-                >
-                  <Text style={styles.shareBtnText}>{t("shareThisRide")}</Text>
-                </Pressable>
-              </Reanimated.View>
+              {/* ── Social share prompt ─────────────────────────────────── */}
+              {showSharePrompt && !shareDismissed && (
+                <Reanimated.View entering={FadeInUp.delay(200).springify()} style={styles.shareWrap}>
+                  <LinearGradient
+                    colors={["#0c1f3f", "#0a5c54"]}
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                    style={styles.shareCard}
+                  >
+                    <Text style={styles.shareCardEyebrow}>✨ {t("shareInspireEyebrow", "Tell people the amazing things you do")}</Text>
+                    <Text style={styles.shareCardTitle}>{t("shareInspireTitle", "You might inspire someone else today")}</Text>
+                    <Text style={styles.shareCardBody}>{t("shareInspireBody", "Sharing is 100% optional — but one post could bring the next kind driver into this community.")}</Text>
+
+                    {/* Driver share — shown when current user is the driver */}
+                    {currentUserId && currentUserId === params.driverId && (
+                      <Pressable style={styles.shareBtn} onPress={() => void handleShare("driver")}>
+                        <Text style={styles.shareBtnText}>🚗 {t("shareAsDriver", "Share what I did as a driver")}</Text>
+                      </Pressable>
+                    )}
+
+                    {/* Passenger share — shown when current user is NOT the driver */}
+                    {(!params.driverId || currentUserId !== params.driverId) && (
+                      <Pressable style={[styles.shareBtn, styles.shareBtnPassenger]} onPress={() => void handleShare("passenger")}>
+                        <Text style={styles.shareBtnText}>🙏 {t("shareAsPassenger", "Share my free ride experience")}</Text>
+                      </Pressable>
+                    )}
+
+                    <Pressable onPress={() => setShareDismissed(true)} style={styles.shareDismiss}>
+                      <Text style={styles.shareDismissText}>{t("maybeLater", "Maybe later")}</Text>
+                    </Pressable>
+                  </LinearGradient>
+                </Reanimated.View>
+              )}
             </>
           )}
         </ScrollView>
@@ -651,17 +686,18 @@ const styles = StyleSheet.create({
   actionBtnHome: { backgroundColor: "#f0fdf4", borderWidth: 1, borderColor: "#86efac" },
   actionBtnText: { color: "#ffffff", fontWeight: "700", fontSize: 14 },
 
-  // Shareable card
-  shareWrap: { margin: 16, marginBottom: 0, gap: 10 },
-  shareCard: { borderRadius: 20, padding: 20, gap: 6 },
-  shareCardBrand: { color: "#5eead4", fontSize: 12, fontWeight: "700", letterSpacing: 0.5 },
+  // Social share card
+  shareWrap: { margin: 16, marginBottom: 0 },
+  shareCard: { borderRadius: 20, padding: 20, gap: 14 },
+  shareCardEyebrow: { color: "#5eead4", fontSize: 11, fontWeight: "700", letterSpacing: 1, textTransform: "uppercase" },
   shareCardTitle: { color: "#ffffff", fontSize: 20, fontWeight: "800", lineHeight: 26 },
-  shareCardStat: { color: "rgba(255,255,255,0.7)", fontSize: 13, fontWeight: "600" },
-  shareCardTags: { color: "#99f6e4", fontSize: 12, fontWeight: "600", marginTop: 2 },
-  shareCardCta: { color: "rgba(255,255,255,0.5)", fontSize: 12, marginTop: 4 },
+  shareCardBody: { color: "rgba(255,255,255,0.65)", fontSize: 13, lineHeight: 20 },
   shareBtn: {
     backgroundColor: "#2563eb", borderRadius: 14,
-    paddingVertical: 13, alignItems: "center",
+    paddingVertical: 14, alignItems: "center",
   },
+  shareBtnPassenger: { backgroundColor: "#0d9488" },
   shareBtnText: { color: "#ffffff", fontWeight: "700", fontSize: 14 },
+  shareDismiss: { paddingVertical: 4, alignItems: "center" },
+  shareDismissText: { color: "rgba(255,255,255,0.35)", fontSize: 12, fontWeight: "600" },
 });

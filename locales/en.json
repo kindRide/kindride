@@ -715,6 +715,15 @@
   "onbSkip": "Skip walkthrough",
   "onbStartDriving": "Start driving  →",
   "faqTitle": "Frequently Asked Questions",
+  "shareInspireEyebrow": "Tell people the amazing things you do",
+  "shareInspireTitle": "You might inspire someone else today",
+  "shareInspireBody": "Sharing is 100% optional — but one post could bring the next kind driver into this community.",
+  "shareAsDriver": "Share what I did as a driver",
+  "shareAsPassenger": "Share my free ride experience",
+  "maybeLater": "Maybe later",
+  "shareDriverMessage": "Just helped someone get home — completely free 🌱\nNo fare. No catch. Just a neighbour helping a neighbour.\n\nThis is what KindRide is about. Together, let's build a world of kindness 💙\n\nkindride.app",
+  "sharePassengerMessage": "Someone just gave me a completely free ride today 🙏\nShoutout to my amazing KindRide driver — proof that good people still exist.\n\nIf they can give, maybe I can too. Join the movement 🌱\n\nkindride.app",
+
   "driverArrivingNow": "Driver arriving now!",
   "driverDistanceAway": "Driver is {{dist}} mi away · ~{{eta}} min",
 
