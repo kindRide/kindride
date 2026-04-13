@@ -565,7 +565,7 @@ export default function SettingsScreen() {
             iconBg="#f8fafc"
             label={t("helpFaq", "Help & FAQ")}
             sub={t("answersToCommonQuestions")}
-            onPress={() => Alert.alert(t("help", "Help"), t("visitHelpDocumentation"))}
+            onPress={() => router.push("/faq")}
             simplified={S}
           />
           <SettingRow
