@@ -164,3 +164,8 @@ export function getReferralRedeemUrlOrNull(): string | null {
   const b = getBackendBaseUrlOrNull();
   return b ? `${b}/referrals/redeem` : null;
 }
+
+export function getDriverStreakUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/points/streak` : null;
+}

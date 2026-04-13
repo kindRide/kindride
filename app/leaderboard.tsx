@@ -1,12 +1,15 @@
+import { useEffect, useState } from "react";
 import { useRouter } from "expo-router";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import Reanimated, { FadeInDown, FadeInUp } from "react-native-reanimated";
 import { useTranslation } from "react-i18next";
 
-// Mock weekly city leaderboard — first name only for privacy
-const LEADERBOARD_ENTRIES = [
+import { supabase } from "@/lib/supabase";
+
+// Fallback data if backend is unreachable
+const FALLBACK_ENTRIES = [
   { rank: 1,  name: "Adaeze",   pts: 1840, badge: "🏆", streak: 14 },
   { rank: 2,  name: "Tunde",    pts: 1620, badge: "🥈", streak: 9  },
   { rank: 3,  name: "Fatima",   pts: 1505, badge: "🥉", streak: 12 },
@@ -25,8 +28,50 @@ export default function LeaderboardScreen() {
   const { t } = useTranslation();
   const router = useRouter();
 
-  const top3 = LEADERBOARD_ENTRIES.slice(0, 3);
-  const rest = LEADERBOARD_ENTRIES.slice(3);
+  const [entries, setEntries] = useState(FALLBACK_ENTRIES);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchLeaderboard() {
+      try {
+        const session = await supabase?.auth.getSession();
+        const token = session?.data.session?.access_token;
+        const baseUrl = process.env.EXPO_PUBLIC_POINTS_API_URL?.replace("/points/award", "");
+        
+        if (!baseUrl || !token) return;
+
+        const res = await fetch(`${baseUrl}/points/leaderboard?limit=10`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.length > 0) {
+            const mapped = data.map((d: any) => ({
+              rank: d.rank,
+              name: d.display_name.split(" ")[0] || "Driver",
+              pts: d.total_points,
+              badge: d.rank === 1 ? "🏆" : d.rank === 2 ? "🥈" : d.rank === 3 ? "🥉" : "⭐",
+              streak: d.streak_days ?? 0,
+            }));
+            // Pad to ensure podium doesn't break visually if < 3 drivers exist in DB
+            while (mapped.length < 3) {
+              mapped.push({ rank: mapped.length + 1, name: "Waiting...", pts: 0, badge: "⏳", streak: 0 });
+            }
+            setEntries(mapped);
+          }
+        }
+      } catch (error) {
+        console.log("Failed to fetch live leaderboard", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchLeaderboard();
+  }, []);
+
+  const top3 = entries.slice(0, 3);
+  const rest = entries.slice(3);
 
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>

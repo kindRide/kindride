@@ -531,8 +531,37 @@ def _update_points_balance(client: httpx.Client, driver_id: str, new_total: int)
     if r.status_code not in (200, 204):
         raise HTTPException(status_code=502, detail=f"Update points failed: {r.text}")
 
-def _evaluate_daily_bonuses(client: httpx.Client, driver_id: str, current_ride_id: str, target_dt: datetime) -> list[tuple[str, int, str]]:
-    """Evaluates First Ride and 7-Day Streaks based on past ledger events."""
+def _compute_streak_from_dates(past_dates: set, reference_date) -> int:
+    """
+    Given a set of dates on which a driver completed at least one ride,
+    compute the current consecutive-day streak ending on reference_date.
+    Returns 0 if no ride on reference_date, 1 if only today, etc.
+    """
+    if reference_date not in past_dates:
+        # Check if they rode yesterday (streak is still live today)
+        yesterday = reference_date - timedelta(days=1)
+        if yesterday not in past_dates:
+            return 0
+        # Streak is alive from yesterday — count backwards from yesterday
+        count = 0
+        for i in range(0, 365):
+            if (yesterday - timedelta(days=i)) in past_dates:
+                count += 1
+            else:
+                break
+        return count
+
+    streak = 1
+    for i in range(1, 365):
+        if (reference_date - timedelta(days=i)) in past_dates:
+            streak += 1
+        else:
+            break
+    return streak
+
+
+def _fetch_driver_ride_dates(client: httpx.Client, driver_id: str, exclude_ride_id: str | None = None) -> set:
+    """Fetch the set of calendar dates on which this driver completed a ride."""
     r = client.get(
         _rest_url("/point_events"),
         params={
@@ -540,35 +569,35 @@ def _evaluate_daily_bonuses(client: httpx.Client, driver_id: str, current_ride_i
             "action": "in.(LEG_COMPLETED_BASE,TRIP_POINTS_AWARDED)",
             "select": "created_at,ride_id",
             "order": "created_at.desc",
-            "limit": "50",
+            "limit": "100",
         },
         headers=_service_headers(),
-        timeout=15.0
+        timeout=15.0,
     )
     if r.status_code != 200:
-        return []
-    rows = _rest_json_list(r, "point_events daily eval")
-
-    target_date = target_dt.date()
-    past_dates = set()
+        return set()
+    rows = _rest_json_list(r, "point_events streak fetch")
+    past_dates: set = set()
     for row in rows:
-        if str(row.get("ride_id")) == current_ride_id:
-            continue # Skip the ride we just inserted
+        if exclude_ride_id and str(row.get("ride_id")) == exclude_ride_id:
+            continue
         dt = _parse_supabase_timestamptz(row.get("created_at"))
         if dt:
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
             past_dates.add(dt.date())
+    return past_dates
+
+
+def _evaluate_daily_bonuses(client: httpx.Client, driver_id: str, current_ride_id: str, target_dt: datetime) -> list[tuple[str, int, str]]:
+    """Evaluates First Ride and 7-Day Streaks based on past ledger events."""
+    past_dates = _fetch_driver_ride_dates(client, driver_id, exclude_ride_id=current_ride_id)
+    target_date = target_dt.date()
 
     bonuses = []
     if target_date not in past_dates:
         bonuses.append(("DAILY_FIRST_RIDE_BONUS", 3, "first_ride"))
-        streak_days = 1
-        for i in range(1, 100):
-            if (target_date - timedelta(days=i)) in past_dates:
-                streak_days += 1
-            else:
-                break
+        streak_days = _compute_streak_from_dates(past_dates | {target_date}, target_date)
         if streak_days > 0 and streak_days % 7 == 0:
             bonuses.append(("WEEKLY_7_DAY_STREAK_BONUS", 25, "streak_7"))
 
@@ -3921,12 +3950,40 @@ async def tips_webhook(request: Request):
 # Leaderboard / Gamification
 # ─────────────────────────────────────────────────────────────────────────────
 
+@app.get("/points/streak")
+@(_limiter.limit("30/minute") if _SLOWAPI_AVAILABLE else lambda f: f)
+def get_driver_streak(
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    """
+    Returns the calling driver's current consecutive active-day streak.
+    A day counts if the driver completed at least one ride that day.
+    Streak stays alive if they rode yesterday (hasn't reset yet today).
+    """
+    _require_config()
+    driver_id = str(_verify_user_bearer_token(authorization))
+
+    with httpx.Client() as client:
+        past_dates = _fetch_driver_ride_dates(client, driver_id)
+
+    today = datetime.now(timezone.utc).date()
+    streak = _compute_streak_from_dates(past_dates, today)
+
+    return {
+        "driver_id": driver_id,
+        "streak_days": streak,
+        "last_active_date": max(past_dates).isoformat() if past_dates else None,
+    }
+
+
 class LeaderboardEntry(BaseModel):
     driver_id: str
     display_name: str
     total_points: int
     tier: str
     rank: int
+    streak_days: int = 0
 
 
 @app.get("/points/leaderboard", response_model=list[LeaderboardEntry])
@@ -3981,7 +4038,37 @@ def points_leaderboard(
                 # Fallback to "Kind Driver" if they haven't set a display name
                 presence_map[str(pr["driver_id"])] = str(pr.get("display_name") or "Kind Driver")
 
-        # 3. Merge and format the response
+        # 3. Fetch streak for each driver in a single batch query
+        today = datetime.now(timezone.utc).date()
+        streak_map: dict[str, int] = {}
+        if driver_ids:
+            r_streak = client.get(
+                _rest_url("/point_events"),
+                params={
+                    "driver_id": f"in.({ids_csv})",
+                    "action": "in.(LEG_COMPLETED_BASE,TRIP_POINTS_AWARDED)",
+                    "select": "driver_id,created_at",
+                    "order": "created_at.desc",
+                    "limit": "500",
+                },
+                headers=_service_headers(),
+                timeout=15.0,
+            )
+            if r_streak.status_code == 200:
+                streak_rows = _rest_json_list(r_streak, "leaderboard streaks")
+                # Group dates by driver
+                dates_by_driver: dict[str, set] = {}
+                for row in streak_rows:
+                    did = str(row.get("driver_id", ""))
+                    dt = _parse_supabase_timestamptz(row.get("created_at"))
+                    if did and dt:
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        dates_by_driver.setdefault(did, set()).add(dt.date())
+                for did, dates in dates_by_driver.items():
+                    streak_map[did] = _compute_streak_from_dates(dates, today)
+
+        # 4. Merge and format the response
         leaderboard = []
         for idx, p in enumerate(top_points):
             did = str(p["driver_id"])
@@ -3990,9 +4077,10 @@ def points_leaderboard(
                 display_name=presence_map.get(did, "Kind Driver"),
                 total_points=int(p.get("total_points", 0)),
                 tier=str(p.get("tier", "Helper")),
-                rank=idx + 1
+                rank=idx + 1,
+                streak_days=streak_map.get(did, 0),
             ))
-        
+
         return leaderboard
 
 

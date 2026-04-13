@@ -1,7 +1,8 @@
-import { Link, useLocalSearchParams, useRouter } from "expo-router";
-import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
+import { LinearGradient } from "expo-linear-gradient";
+import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
   Alert,
@@ -24,10 +25,9 @@ import Reanimated, {
   withTiming,
 } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useTranslation } from "react-i18next";
 
-import { useDriverPoints } from "@/lib/use-driver-points";
 import { hasSupabaseEnv, supabase } from "@/lib/supabase";
+import { useDriverPoints } from "@/lib/use-driver-points";
 
 type EventItem = {
   id: string;
@@ -221,8 +221,6 @@ export default function PointsScreen() {
     { id: "1", label: t("rideCompleted"), value: 10 },
     ...(earnedPoints >= 15 ? [{ id: "2", label: t("fiveStarBonus"), value: 5 }] : []),
   ]);
-  // Mock streak — in production this would come from a consecutive_days field
-  const [streak] = useState(3);
   const [showMilestoneBadge, setShowMilestoneBadge] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
 
@@ -239,7 +237,7 @@ export default function PointsScreen() {
   }, []);
 
   // ── Points data
-  const { totalPoints, tier: currentTier, loading: isLoading, error: pointsError } = useDriverPoints(sessionUserId ?? null);
+  const { totalPoints, tier: currentTier, streakDays: streak, loading: isLoading, error: pointsError } = useDriverPoints(sessionUserId ?? null);
   const dataSource = sessionUserId && !pointsError ? "supabase" : "local";
   const currentTierLabel = currentTier
     ? tierLabel(normalizeTierKey(currentTier) ?? currentTier)
@@ -546,8 +544,8 @@ export default function PointsScreen() {
           >
             <Text style={styles.payItForwardIcon}>🎁</Text>
             <View style={{ flex: 1 }}>
-              <Text style={styles.payItForwardTitle}>{t("payItForward")}</Text>
-              <Text style={styles.payItForwardSub}>{t("payItForwardSub")}</Text>
+              <Text style={styles.payItForwardTitle}>Donate to Charity</Text>
+              <Text style={styles.payItForwardSub}>Convert your points into real-world impact. We match donations to local shelters.</Text>
             </View>
           </LinearGradient>
           <View style={styles.payItForwardActions}>
@@ -561,11 +559,44 @@ export default function PointsScreen() {
                     if (!canAfford) return;
                     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                     Alert.alert(
-                      t("giftRideTitle"),
-                      t("giftRideBody", { points: cost }),
+                      "Confirm Donation",
+                      `Donate ${cost} points to the local food bank/shelter fund?`,
                       [
                         { text: t("cancel"), style: "cancel" },
-                        { text: t("giftIt"), onPress: () => Alert.alert(t("comingSoon"), t("payItForwardLaunchesSoon")) },
+                        { text: "Donate", onPress: async () => {
+                          try {
+                            const session = await supabase?.auth.getSession();
+                            const token = session?.data.session?.access_token;
+                            const baseUrl = process.env.EXPO_PUBLIC_POINTS_API_URL?.replace("/points/award", "");
+                            if (!token || !baseUrl) return;
+                            
+                            // Generate a simple idempotency UUID string
+                            const transactionId = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+                              const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                              return v.toString(16);
+                            });
+                            
+                            const res = await fetch(`${baseUrl}/points/donate`, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                              body: JSON.stringify({
+                                charity_id: "local_community_fund",
+                                points_amount: cost,
+                                transaction_id: transactionId
+                              })
+                            });
+                            
+                            if (res.ok) {
+                              void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                              Alert.alert("Thank You!", `You successfully donated ${cost} points. Your kindness makes a real difference.`);
+                            } else {
+                              const err = await res.text();
+                              Alert.alert("Donation Failed", err);
+                            }
+                          } catch (e) {
+                            Alert.alert("Error", "Could not process donation at this time.");
+                          }
+                        } },
                       ]
                     );
                   }}
