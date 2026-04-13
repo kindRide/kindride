@@ -1,9 +1,17 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "expo-router";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import Reanimated, { FadeInDown, FadeInUp } from "react-native-reanimated";
+import Reanimated, {
+  FadeInDown,
+  FadeInUp,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from "react-native-reanimated";
 import { useTranslation } from "react-i18next";
 
 import { supabase } from "@/lib/supabase";
@@ -23,6 +31,62 @@ const FALLBACK_ENTRIES = [
 ];
 
 const MEDAL_COLORS: Record<number, string> = { 1: "#f59e0b", 2: "#94a3b8", 3: "#d97706" };
+
+function ShimmerBar({ width, height = 14, radius = 8, style }: { width: number | string; height?: number; radius?: number; style?: object }) {
+  const opacity = useSharedValue(0.4);
+  useEffect(() => {
+    opacity.value = withRepeat(
+      withSequence(withTiming(1, { duration: 700 }), withTiming(0.4, { duration: 700 })),
+      -1,
+      false
+    );
+  }, []);
+  const animStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return <Reanimated.View style={[{ width, height, borderRadius: radius, backgroundColor: "#e2e8f0" }, style, animStyle]} />;
+}
+
+function LeaderboardSkeleton() {
+  return (
+    <SafeAreaView style={styles.root} edges={["top"]}>
+      {/* Hero skeleton */}
+      <LinearGradient
+        colors={["#1e1b4b", "#2e1065", "#0c1f3f"]}
+        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+        style={styles.hero}
+      >
+        <ShimmerBar width={60} height={12} style={{ marginBottom: 16, opacity: 0.3 }} />
+        <ShimmerBar width="55%" height={28} radius={10} style={{ marginBottom: 8, opacity: 0.3 }} />
+        <ShimmerBar width="70%" height={12} radius={6} style={{ marginBottom: 32, opacity: 0.3 }} />
+        {/* Podium placeholders */}
+        <View style={{ flexDirection: "row", justifyContent: "center", alignItems: "flex-end", gap: 16 }}>
+          {[{ size: 60, mt: 30 }, { size: 76, mt: 0 }, { size: 60, mt: 48 }].map((slot, i) => (
+            <View key={i} style={{ alignItems: "center", gap: 6, marginTop: slot.mt }}>
+              <ShimmerBar width={slot.size} height={slot.size} radius={slot.size / 2} style={{ opacity: 0.25 }} />
+              <ShimmerBar width={50} height={10} radius={5} style={{ opacity: 0.25 }} />
+              <ShimmerBar width={40} height={8} radius={4} style={{ opacity: 0.25 }} />
+            </View>
+          ))}
+        </View>
+      </LinearGradient>
+      {/* List skeleton */}
+      <View style={[styles.listCard, { margin: 16 }]}>
+        {Array.from({ length: 7 }).map((_, i) => (
+          <View key={i}>
+            <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 14, gap: 12 }}>
+              <ShimmerBar width={24} height={12} radius={4} />
+              <ShimmerBar width={36} height={36} radius={18} />
+              <ShimmerBar width={80} height={13} radius={6} />
+              <View style={{ flex: 1 }} />
+              <ShimmerBar width={36} height={11} radius={4} />
+              <ShimmerBar width={52} height={13} radius={6} />
+            </View>
+            {i < 6 && <View style={styles.divider} />}
+          </View>
+        ))}
+      </View>
+    </SafeAreaView>
+  );
+}
 
 export default function LeaderboardScreen() {
   const { t } = useTranslation();
@@ -69,6 +133,8 @@ export default function LeaderboardScreen() {
     }
     fetchLeaderboard();
   }, []);
+
+  if (loading) return <LeaderboardSkeleton />;
 
   const top3 = entries.slice(0, 3);
   const rest = entries.slice(3);

@@ -1,7 +1,6 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
   Platform,
   Pressable,
@@ -11,6 +10,13 @@ import {
   TextInput,
   View,
 } from "react-native";
+import Reanimated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from "react-native-reanimated";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -23,6 +29,23 @@ import { registerRouteCommitment } from "@/lib/route-commitment";
 import { supabase } from "@/lib/supabase";
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+function ShimmerBar({ width, height = 14, radius = 8, style }: { width: number | string; height?: number; radius?: number; style?: object }) {
+  const opacity = useSharedValue(0.4);
+  useEffect(() => {
+    opacity.value = withRepeat(
+      withSequence(withTiming(1, { duration: 700 }), withTiming(0.4, { duration: 700 })),
+      -1,
+      false
+    );
+  }, []);
+  const animStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return (
+    <Reanimated.View
+      style={[{ width, height, borderRadius: radius, backgroundColor: "#e2e8f0" }, style, animStyle]}
+    />
+  );
+}
 
 type RideStatusPayload = {
   ride_id?: string;
@@ -267,9 +290,18 @@ export default function IncomingRideScreen() {
 
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#2563eb" />
-        <Text style={styles.hint}>{t("loadingRequest", "Loading request…")}</Text>
+      <View style={[styles.centered, { alignItems: "stretch", padding: 24 }]}>
+        <ShimmerBar width="60%" height={22} radius={10} style={{ marginBottom: 20, alignSelf: "center" }} />
+        <View style={{ backgroundColor: "#fff", borderRadius: 16, padding: 20, gap: 14, borderWidth: 1, borderColor: "#e2e8f0" }}>
+          <ShimmerBar width="40%" height={12} />
+          <ShimmerBar width="80%" height={18} />
+          <ShimmerBar width="55%" height={12} />
+          <ShimmerBar width="70%" height={18} />
+          <View style={{ flexDirection: "row", gap: 12, marginTop: 8 }}>
+            <ShimmerBar width="48%" height={44} radius={10} />
+            <ShimmerBar width="48%" height={44} radius={10} />
+          </View>
+        </View>
       </View>
     );
   }
