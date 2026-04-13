@@ -713,5 +713,20 @@
   "onbSafetyBullet3": "All passengers have verified accounts",
   "onbNext": "Next  →",
   "onbSkip": "Skip walkthrough",
-  "onbStartDriving": "Start driving  →"
+  "onbStartDriving": "Start driving  →",
+  "faqTitle": "Frequently Asked Questions",
+  "faqQ1": "What is KindRide and how is it free?",
+  "faqA1": "KindRide is a free humanitarian rideshare app — no fares, no surge pricing, no hidden fees. Drivers give rides voluntarily to people in their community. The app is sustained by optional tips passengers leave for drivers, community partnerships, and grant funding. KindRide takes nothing from tips.",
+  "faqQ2": "How do I get a ride?",
+  "faqA2": "Open the app and tap 'Get a Ride' on the home screen. Enter your destination, and KindRide searches for nearby drivers who are online and heading in your direction. When a driver is matched, you'll see their name, rating, and ETA. The driver has 60 seconds to accept.",
+  "faqQ3": "How do I become a driver?",
+  "faqA3": "Sign in with your email, then open the Driver tab. A short walkthrough will explain how everything works. Tap the power button to go online — passengers nearby will be able to find and request you. You earn Kind Points for every completed ride.",
+  "faqQ4": "What are Kind Points, tiers and streaks?",
+  "faqA4": "Drivers earn 10 Kind Points per completed ride, with bonuses for 5-star ratings and daily streaks. Points unlock tiers — Helper, Supporter, Good Samaritan, Guardian, Champion — and can be redeemed to donate to shelters or earn community badges. A streak is the number of consecutive days you've completed at least one ride. Miss a full day and your streak resets.",
+  "faqQ5": "Is KindRide safe?",
+  "faqA5": "Safety is built into every trip. Sessions are recorded in-app and stored securely for 72 hours, then auto-deleted (unless flagged for review). An SOS emergency button is available to both passengers and drivers at any time during a trip. All accounts require email verification, and you can share your live trip link with a trusted contact.",
+  "faqQ6": "How do voluntary tips work?",
+  "faqA6": "After each ride, passengers can optionally leave a tip of $1, $2, $5, or any custom amount. Payments are processed securely via Stripe, and 100% of every tip goes directly to the driver's bank account — KindRide keeps nothing. You never have to tip; kindness is always enough.",
+  "faqQ7": "Why would a driver give me a free ride?",
+  "faqA7": "KindRide's matching only connects you with drivers who are already heading in your direction. Our zero-detour approach means drivers don't have to go out of their way — they simply offer an empty seat to someone who needs it. Drivers earn Kind Points, community recognition, and the satisfaction of making a real difference."
 }

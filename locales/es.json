@@ -712,5 +712,21 @@
   "onbSafetyBullet3": "Todos los pasajeros tienen cuentas verificadas",
   "onbNext": "Siguiente  →",
   "onbSkip": "Omitir introducción",
-  "onbStartDriving": "Empezar a conducir  →"
+  "onbStartDriving": "Empezar a conducir  →",
+
+  "faqTitle": "Preguntas Frecuentes",
+  "faqQ1": "¿Qué es KindRide y cómo es gratis?",
+  "faqA1": "KindRide es una aplicación gratuita de transporte humanitario — sin tarifas, sin precios variables, sin cargos ocultos. Los conductores ofrecen viajes voluntariamente a personas de su comunidad. La app se sostiene con propinas opcionales, alianzas comunitarias y subvenciones. KindRide no retiene nada de las propinas.",
+  "faqQ2": "¿Cómo consigo un viaje?",
+  "faqA2": "Abre la app y toca 'Obtener un viaje' en la pantalla principal. Ingresa tu destino y KindRide busca conductores cercanos que estén en línea y vayan en tu dirección. Cuando se encuentre un conductor, verás su nombre, calificación y tiempo de llegada. El conductor tiene 60 segundos para aceptar.",
+  "faqQ3": "¿Cómo me convierto en conductor?",
+  "faqA3": "Inicia sesión con tu correo, luego abre la pestaña Conductor. Un breve recorrido te explicará cómo funciona todo. Toca el botón de encendido para conectarte — los pasajeros cercanos podrán encontrarte y solicitarte. Ganas Kind Points por cada viaje completado.",
+  "faqQ4": "¿Qué son los Kind Points, niveles y rachas?",
+  "faqA4": "Los conductores ganan 10 Kind Points por viaje completado, con bonificaciones por calificaciones de 5 estrellas y rachas diarias. Los puntos desbloquean niveles — Ayudante, Apoyo, Buen Samaritano, Guardián, Campeón — y se pueden canjear para donar a refugios o ganar insignias. Una racha es el número de días consecutivos con al menos un viaje. Si pierdes un día completo, tu racha se reinicia.",
+  "faqQ5": "¿Es seguro KindRide?",
+  "faqA5": "La seguridad está integrada en cada viaje. Las sesiones se graban y almacenan de forma segura durante 72 horas, luego se eliminan automáticamente (a menos que se marquen para revisión). Hay un botón SOS disponible para pasajeros y conductores en todo momento durante el viaje. Todas las cuentas requieren verificación por correo electrónico.",
+  "faqQ6": "¿Cómo funcionan las propinas voluntarias?",
+  "faqA6": "Después de cada viaje, los pasajeros pueden dejar una propina opcional de $1, $2, $5 o cualquier monto personalizado. Los pagos se procesan de forma segura a través de Stripe, y el 100% de cada propina va directamente al conductor — KindRide no retiene nada.",
+  "faqQ7": "¿Por qué un conductor me daría un viaje gratis?",
+  "faqA7": "KindRide solo conecta pasajeros con conductores que ya van en su dirección. Nuestro enfoque de cero desvíos significa que los conductores no tienen que salir de su camino — simplemente ofrecen un asiento vacío a quien lo necesita. Los conductores ganan puntos, reconocimiento comunitario y la satisfacción de hacer una diferencia real."
 }
