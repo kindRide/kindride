@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 import { hasRecordingConsent } from '@/lib/user-consent';
+import { registerTokenIfAuthenticated } from '@/lib/notifications/registerDeviceToken';
 import { useTranslation } from 'react-i18next';
 
 export default function SignInScreen() {
@@ -59,6 +60,25 @@ export default function SignInScreen() {
       }
 
       const consentGiven = await hasRecordingConsent(user.id);
+
+      // Request push permission + register token — fire and forget, never block sign-in
+      void registerTokenIfAuthenticated(async () => {
+        try {
+          const Notifications = await import('expo-notifications');
+          const { status: existing } = await Notifications.getPermissionsAsync();
+          let finalStatus = existing;
+          if (existing !== 'granted') {
+            const { status } = await Notifications.requestPermissionsAsync();
+            finalStatus = status;
+          }
+          if (finalStatus !== 'granted') return null;
+          const tokenData = await Notifications.getExpoPushTokenAsync();
+          return tokenData.data;
+        } catch {
+          return null;
+        }
+      });
+
       router.replace(consentGiven ? '/(tabs)' : '/complete-signup');
     }
   };

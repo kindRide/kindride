@@ -6,19 +6,48 @@ Isolated module for Expo push notification handling.
 import logging
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 import httpx
 
 logger = logging.getLogger("kindride.notifications")
 
+try:
+    from slowapi import Limiter
+    from slowapi.util import get_remote_address
+    _notif_limiter = Limiter(key_func=get_remote_address)
+    _SLOWAPI_AVAILABLE = True
+except ImportError:
+    _notif_limiter = None
+    _SLOWAPI_AVAILABLE = False
+
 notifications_router = APIRouter(prefix="/notifications", tags=["notifications"])
 
-try:
-    from expo_push_notifications import send_push_notifications
-    EXPO_NOTIFICATIONS_AVAILABLE = True
-except ImportError:
-    EXPO_NOTIFICATIONS_AVAILABLE = False
+EXPO_NOTIFICATIONS_AVAILABLE = True  # uses Expo Push API over HTTP — no library needed
+
+
+def _send_expo_push_notif(messages: list[dict]) -> dict:
+    """Send push notifications via Expo Push API."""
+    if not messages:
+        return {"status": "no_messages"}
+    try:
+        import httpx as _httpx
+        with _httpx.Client() as client:
+            r = client.post(
+                "https://exp.host/--/api/v2/push/send",
+                json=messages,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "Accept-Encoding": "gzip, deflate",
+                },
+                timeout=15.0,
+            )
+            r.raise_for_status()
+            return r.json()
+    except Exception as exc:
+        logger.warning("Expo push HTTP error: %s", str(exc))
+        return {"error": str(exc)}
 
 
 class RegisterPushTokenRequest(BaseModel):
@@ -50,7 +79,9 @@ class SendNotificationRequest(BaseModel):
 
 
 @notifications_router.post("/register-token")
+@(_notif_limiter.limit("5/minute") if _SLOWAPI_AVAILABLE else lambda f: f)
 def register_push_token(
+    request: Request,
     payload: RegisterPushTokenRequest,
     authorization: str | None = Header(default=None),
 ):
@@ -205,10 +236,11 @@ def send_notification(
 
             # Send notification
             try:
-                response = send_push_notifications([{
+                response = _send_expo_push_notif([{
                     "to": push_token,
                     "title": payload.title,
                     "body": payload.body,
+                    "sound": "default",
                     "data": payload.data or {},
                 }])
                 logger.info(

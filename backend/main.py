@@ -93,11 +93,34 @@ try:
     _SLOWAPI_AVAILABLE = True
 except ImportError:
     _SLOWAPI_AVAILABLE = False
-try:
-    from expo_push_notifications import send_push_notifications
-    EXPO_NOTIFICATIONS_AVAILABLE = True
-except ImportError:
-    EXPO_NOTIFICATIONS_AVAILABLE = False
+EXPO_NOTIFICATIONS_AVAILABLE = True  # always available — uses Expo Push API over HTTP
+
+
+def _send_expo_push(messages: list[dict]) -> dict:
+    """Send push notifications via Expo Push API (no third-party library needed)."""
+    if not messages:
+        return {"status": "no_messages"}
+    try:
+        with httpx.Client() as client:
+            r = client.post(
+                "https://exp.host/--/api/v2/push/send",
+                json=messages,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "Accept-Encoding": "gzip, deflate",
+                },
+                timeout=15.0,
+            )
+            r.raise_for_status()
+            return r.json()
+    except Exception as exc:
+        logger.warning(
+            "Expo push HTTP error: %s",
+            str(exc),
+            extra={"event_type": "expo_push_error"},
+        )
+        return {"error": str(exc)}
 
 # Import isolated routers
 from notifications_routes import notifications_router
@@ -1289,59 +1312,66 @@ def _notify_driver_ride_request(*, driver_user_id: str, ride_id: str, destinatio
     """
     Send a single Expo push to the requested driver only (lookup in push_tokens by user_id).
     Called after POST /rides/request-driver persists pending_driver_id + requested.
+    Uses Expo Push API over HTTP — no third-party library needed.
     """
-    if not EXPO_NOTIFICATIONS_AVAILABLE:
-        logger.info(
-            "ride_request push skipped (install expo_push_notifications)",
-            extra={"event_type": "ride_request_push", "ride_id": ride_id},
-        )
-        return
     try:
-        from expo_push_notifications import send_push_notifications
-    except ImportError:
-        return
-    with httpx.Client() as client:
-        r = client.get(
-            _rest_url("/push_tokens"),
-            params={"user_id": f"eq.{driver_user_id}", "select": "push_token", "limit": "1"},
-            headers=_service_headers(),
-            timeout=15.0,
-        )
-        if r.status_code != 200:
-            return
-        rows = _rest_json_list(r, "push_tokens ride_request")
-        if not rows:
-            return
-        token = rows[0].get("push_token")
-        if not token or not isinstance(token, str):
-            logger.info(
-                "ride_request push skipped (no push_token for driver)",
-                extra={"event_type": "ride_request_push", "ride_id": ride_id},
+        with httpx.Client() as client:
+            r = client.get(
+                _rest_url("/push_tokens"),
+                params={"user_id": f"eq.{driver_user_id}", "select": "push_token", "limit": "1"},
+                headers=_service_headers(),
+                timeout=15.0,
             )
-            return
+            if r.status_code != 200:
+                return
+            rows = _rest_json_list(r, "push_tokens ride_request")
+            if not rows:
+                logger.info(
+                    "ride_request push skipped (no push_token for driver)",
+                    extra={"event_type": "ride_request_push", "ride_id": ride_id},
+                )
+                return
+            token = rows[0].get("push_token")
+            if not token or not isinstance(token, str):
+                return
+
         hint = destination_hint.strip()[:80] if destination_hint else ""
         body = (
             "A passenger requested you for a KindRide trip."
-            + (f" Destination hint: {hint}." if hint else "")
+            + (f" Destination: {hint}." if hint else "")
         )
         logger.info(
-            "ride_request push sending ride_id=%s",
+            "ride_request push sending ride_id=%s driver=%s",
             ride_id,
+            driver_user_id,
+            extra={"event_type": "ride_request_push", "ride_id": ride_id},
         )
-        send_push_notifications(
-            [
-                {
-                    "to": token,
-                    "title": "New Ride Request 🚗",
-                    "body": body,
-                    "data": {
-                        "url": f"/incoming-ride?rideId={ride_id}",
-                        "rideId": ride_id,
-                        "type": "incoming_ride_request",
-                        "destinationHint": hint,
-                    },
-                }
-            ]
+        result = _send_expo_push([
+            {
+                "to": token,
+                "title": "New Ride Request 🚗",
+                "body": body,
+                "sound": "default",
+                "data": {
+                    "url": f"/incoming-ride?rideId={ride_id}",
+                    "rideId": ride_id,
+                    "type": "incoming_ride_request",
+                    "destinationHint": hint,
+                },
+            }
+        ])
+        logger.info(
+            "ride_request push result ride_id=%s result=%s",
+            ride_id,
+            str(result)[:200],
+            extra={"event_type": "ride_request_push_result", "ride_id": ride_id},
+        )
+    except Exception as exc:
+        # Never crash the request flow because of a notification failure
+        logger.warning(
+            "ride_request push failed (non-fatal): %s",
+            str(exc),
+            extra={"event_type": "ride_request_push_error", "ride_id": ride_id},
         )
 
 
