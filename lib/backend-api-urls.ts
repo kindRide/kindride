@@ -154,3 +154,13 @@ export function getConnectOnboardUrlOrNull(): string | null {
   const b = getBackendBaseUrlOrNull();
   return b ? `${b}/connect/onboard` : null;
 }
+
+export function getReferralMyCodeUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/referrals/my-code` : null;
+}
+
+export function getReferralRedeemUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/referrals/redeem` : null;
+}

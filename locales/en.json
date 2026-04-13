@@ -679,5 +679,12 @@
   "driverTier": "Tier",
   "kindDriver": "Kind Driver",
   "joinToConnect": "Want to connect with this driver?",
-  "joinToConnectBody": "Download KindRide — a free humanitarian rideshare app — to request a ride or connect with kind drivers in your city."
+  "joinToConnectBody": "Download KindRide — a free humanitarian rideshare app — to request a ride or connect with kind drivers in your city.",
+  "referralCodeOptional": "Have a referral code? (optional)",
+  "referralCodePlaceholder": "e.g. TUNDE7",
+  "referralCodeAccepted": "Code accepted — you both get 50 pts after your first ride!",
+  "referralCodeInvalidHint": "Code not found — continuing without it.",
+  "invalidReferralCodeTitle": "Invalid code",
+  "invalidReferralCodeBody": "That referral code wasn't found. You can continue without one.",
+  "continueAnyway": "Continue anyway"
 }

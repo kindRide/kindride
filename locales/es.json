@@ -678,5 +678,12 @@
   "driverTier": "Nivel",
   "kindDriver": "Conductor solidario",
   "joinToConnect": "¿Quieres conectarte con este conductor?",
-  "joinToConnectBody": "Descarga KindRide — una app gratuita de transporte humanitario — para solicitar un viaje o conectarte con conductores solidarios en tu ciudad."
+  "joinToConnectBody": "Descarga KindRide — una app gratuita de transporte humanitario — para solicitar un viaje o conectarte con conductores solidarios en tu ciudad.",
+  "referralCodeOptional": "¿Tienes un código de referido? (opcional)",
+  "referralCodePlaceholder": "ej. TUNDE7",
+  "referralCodeAccepted": "Código aceptado — ¡ambos reciben 50 pts después de tu primer viaje!",
+  "referralCodeInvalidHint": "Código no encontrado — continuando sin él.",
+  "invalidReferralCodeTitle": "Código inválido",
+  "invalidReferralCodeBody": "Ese código de referido no fue encontrado. Puedes continuar sin uno.",
+  "continueAnyway": "Continuar de todas formas"
 }

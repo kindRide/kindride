@@ -2875,6 +2875,12 @@ def complete_ride(
             if not b_idem:
                 total_points_awarded += b_earned
 
+    # Referral bonus: award 50 pts to both parties on the referred user's first ride
+    referral_subject = completing_driver_id or (payload.passengerId if payload.passengerId else None)
+    if referral_subject:
+        with httpx.Client() as client:
+            _maybe_award_referral_bonus_on_first_ride(client, referral_subject, ride_id)
+
     # FEATURE 3: Dispatch Trip Analytics asynchronously
     if completing_driver_id or passenger_id_for_analytics:
         background_tasks.add_task(
@@ -4045,6 +4051,206 @@ def donate_points(
         "new_total": current_total - payload.points_amount if not is_idempotent else current_total,
         "idempotent": is_idempotent
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Referral System
+# ─────────────────────────────────────────────────────────────────────────────
+
+_REFERRAL_BONUS_POINTS = 50
+
+
+def _generate_referral_code(user_id: str) -> str:
+    """Deterministic 6-char uppercase code from user UUID. Collision-safe via DB unique constraint."""
+    import hashlib
+    h = hashlib.sha256(user_id.encode()).hexdigest()
+    chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no O/0/I/1 to avoid confusion
+    return "".join(chars[int(h[i * 2: i * 2 + 2], 16) % len(chars)] for i in range(6))
+
+
+def _award_referral_bonus(client: httpx.Client, user_id: str, ride_id: str, tag: str) -> None:
+    """Award REFERRAL_BONUS_POINTS to a user. Non-fatal — never crash the ride flow."""
+    try:
+        _award_points_with_idempotency(
+            client=client,
+            driver_id=user_id,
+            ride_id=ride_id,
+            idempotency_key=f"referral_bonus:{user_id}:{tag}",
+            action="REFERRAL_BONUS",
+            points=_REFERRAL_BONUS_POINTS,
+            metadata={"bonus_type": "referral", "tag": tag},
+        )
+    except Exception as exc:
+        logger.warning("referral bonus award failed (non-fatal): %s", str(exc))
+
+
+@app.get("/referrals/my-code")
+@(_limiter.limit("30/minute") if _SLOWAPI_AVAILABLE else lambda f: f)
+def get_my_referral_code(
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    """
+    Returns the calling user's unique referral code.
+    Creates it on first call — idempotent via DB unique constraint.
+    """
+    _require_config()
+    user_id = str(_verify_user_bearer_token(authorization))
+    code = _generate_referral_code(user_id)
+
+    with httpx.Client() as client:
+        # Upsert: insert if not exists, otherwise ignore duplicate
+        r = client.post(
+            _rest_url("/referral_codes"),
+            headers={**_service_headers(), "Prefer": "resolution=ignore-duplicates,return=representation"},
+            json={"user_id": user_id, "code": code},
+            timeout=10.0,
+        )
+        if r.status_code not in (200, 201):
+            # Row may already exist — fetch it
+            r2 = client.get(
+                _rest_url("/referral_codes"),
+                params={"user_id": f"eq.{user_id}", "select": "code", "limit": "1"},
+                headers=_service_headers(),
+                timeout=10.0,
+            )
+            if r2.status_code == 200:
+                rows = _rest_json_list(r2, "referral_codes fetch")
+                if rows:
+                    code = rows[0]["code"]
+
+    return {"code": code}
+
+
+class RedeemReferralRequest(BaseModel):
+    code: str = Field(min_length=4, max_length=10, description="Referral code entered by new user")
+
+    @field_validator("code")
+    @classmethod
+    def normalize(cls, v: str) -> str:
+        return v.strip().upper()
+
+
+@app.post("/referrals/redeem")
+@(_limiter.limit("5/minute") if _SLOWAPI_AVAILABLE else lambda f: f)
+def redeem_referral_code(
+    request: Request,
+    payload: RedeemReferralRequest,
+    authorization: str | None = Header(default=None),
+):
+    """
+    Called during complete-signup when a new user enters a referral code.
+    Links the new user to their referrer. Bonus points are NOT awarded here —
+    they are awarded when the new user completes their first ride.
+    """
+    _require_config()
+    referred_id = str(_verify_user_bearer_token(authorization))
+
+    with httpx.Client() as client:
+        # Check new user hasn't already redeemed a code
+        r_check = client.get(
+            _rest_url("/referral_redemptions"),
+            params={"referred_id": f"eq.{referred_id}", "select": "id", "limit": "1"},
+            headers=_service_headers(),
+            timeout=10.0,
+        )
+        if r_check.status_code == 200:
+            rows = _rest_json_list(r_check, "referral_redemptions check")
+            if rows:
+                return {"status": "already_redeemed"}
+
+        # Look up the referral code
+        r_code = client.get(
+            _rest_url("/referral_codes"),
+            params={"code": f"eq.{payload.code}", "select": "user_id", "limit": "1"},
+            headers=_service_headers(),
+            timeout=10.0,
+        )
+        if r_code.status_code != 200:
+            raise HTTPException(status_code=502, detail="Could not look up referral code.")
+        code_rows = _rest_json_list(r_code, "referral_codes lookup")
+        if not code_rows:
+            raise HTTPException(status_code=404, detail="Invalid referral code. Please check and try again.")
+
+        referrer_id = str(code_rows[0]["user_id"])
+        if referrer_id == referred_id:
+            raise HTTPException(status_code=400, detail="You cannot use your own referral code.")
+
+        # Create the redemption record
+        r_redeem = client.post(
+            _rest_url("/referral_redemptions"),
+            headers={**_service_headers(), "Prefer": "return=minimal"},
+            json={
+                "referrer_id": referrer_id,
+                "referred_id": referred_id,
+                "code": payload.code,
+                "bonus_awarded": False,
+            },
+            timeout=10.0,
+        )
+        if r_redeem.status_code not in (200, 201, 204):
+            if "unique" in r_redeem.text.lower() or r_redeem.status_code == 409:
+                return {"status": "already_redeemed"}
+            raise HTTPException(status_code=502, detail="Could not save referral redemption.")
+
+    logger.info(
+        "referral_redeemed referrer=%s referred=%s code=%s",
+        referrer_id, referred_id, payload.code,
+        extra={"event_type": "referral_redeemed"},
+    )
+    return {"status": "redeemed", "referrer_id": referrer_id}
+
+
+def _maybe_award_referral_bonus_on_first_ride(
+    client: httpx.Client, passenger_or_driver_id: str, ride_id: str
+) -> None:
+    """
+    Called from /rides/complete. Checks if this user was referred and hasn't
+    had their bonus awarded yet. If yes, awards 50 pts to both parties.
+    Non-fatal: exceptions are logged and swallowed.
+    """
+    try:
+        r = client.get(
+            _rest_url("/referral_redemptions"),
+            params={
+                "referred_id": f"eq.{passenger_or_driver_id}",
+                "bonus_awarded": "eq.false",
+                "select": "id,referrer_id,referred_id",
+                "limit": "1",
+            },
+            headers=_service_headers(),
+            timeout=10.0,
+        )
+        if r.status_code != 200:
+            return
+        rows = _rest_json_list(r, "referral_redemptions bonus check")
+        if not rows:
+            return
+
+        redemption_id = rows[0]["id"]
+        referrer_id = str(rows[0]["referrer_id"])
+        referred_id = str(rows[0]["referred_id"])
+
+        # Award 50 pts to referred user
+        _award_referral_bonus(client, referred_id, ride_id, f"referred:{redemption_id}")
+        # Award 50 pts to referrer
+        _award_referral_bonus(client, referrer_id, ride_id, f"referrer:{redemption_id}")
+
+        # Mark bonus as awarded — idempotent via update
+        client.patch(
+            _rest_url("/referral_redemptions"),
+            params={"id": f"eq.{redemption_id}"},
+            headers={**_service_headers(), "Prefer": "return=minimal"},
+            json={"bonus_awarded": True, "awarded_at": datetime.now(timezone.utc).isoformat()},
+            timeout=10.0,
+        )
+        logger.info(
+            "referral_bonus_awarded referrer=%s referred=%s ride=%s",
+            referrer_id, referred_id, ride_id,
+            extra={"event_type": "referral_bonus_awarded"},
+        )
+    except Exception as exc:
+        logger.warning("referral bonus check failed (non-fatal): %s", str(exc))
 
 
 if __name__ == "__main__":

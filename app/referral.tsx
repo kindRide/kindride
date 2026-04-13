@@ -13,27 +13,58 @@ import { LinearGradient } from "expo-linear-gradient";
 import Reanimated, { FadeInDown } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import { useTranslation } from "react-i18next";
+import { useEffect, useState } from "react";
 
 import { useAuth } from "@/lib/auth";
+import { supabase } from "@/lib/supabase";
+import { getReferralMyCodeUrlOrNull } from "@/lib/backend-api-urls";
 
 export default function ReferralScreen() {
   const { user } = useAuth();
   const router = useRouter();
   const { t } = useTranslation();
+  const [referralCode, setReferralCode] = useState<string | null>(null);
+  const [codeLoading, setCodeLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user) return;
+    const url = getReferralMyCodeUrlOrNull();
+    if (!url || !supabase) {
+      // Fallback: derive from email prefix (same as before)
+      setReferralCode((user.email?.split("@")[0] ?? "KIND").slice(0, 6).toUpperCase());
+      setCodeLoading(false);
+      return;
+    }
+    supabase.auth.getSession().then(async ({ data }) => {
+      const token = data.session?.access_token;
+      if (!token) {
+        setReferralCode((user.email?.split("@")[0] ?? "KIND").slice(0, 6).toUpperCase());
+        setCodeLoading(false);
+        return;
+      }
+      try {
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (res.ok) {
+          const json = await res.json();
+          setReferralCode(json.code ?? (user.email?.split("@")[0] ?? "KIND").slice(0, 6).toUpperCase());
+        } else {
+          setReferralCode((user.email?.split("@")[0] ?? "KIND").slice(0, 6).toUpperCase());
+        }
+      } catch {
+        setReferralCode((user.email?.split("@")[0] ?? "KIND").slice(0, 6).toUpperCase());
+      } finally {
+        setCodeLoading(false);
+      }
+    });
+  }, [user]);
 
   if (!user) {
-    // In a real app, you might want a sign-in prompt. For now, we redirect.
     if (router.canGoBack()) router.back();
     else router.replace("/sign-in");
     return null;
   }
 
-  // Mock referral code generation. In production, this would come from the user's profile.
-  const referralCode = (user.email?.split("@")[0] ?? "KIND")
-    .slice(0, 6)
-    .toUpperCase();
-
-  const shareMessage = t("referralShareMessage", { referralCode });
+  const shareMessage = t("referralShareMessage", { referralCode: referralCode ?? "…" });
 
   const handleShare = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -55,7 +86,7 @@ export default function ReferralScreen() {
         title: t("referralCodeShareTitle"),
       });
     } catch {
-      Alert.alert(t("referralCodeLabel"), referralCode);
+      Alert.alert(t("referralCodeLabel"), referralCode ?? "");
     }
   };
 
@@ -92,10 +123,10 @@ export default function ReferralScreen() {
         <Reanimated.View entering={FadeInDown.delay(120).springify()} style={styles.cardWrap}>
           <View style={styles.card}>
             <Text style={styles.cardLabel}>{t("referralCodeLabel")}</Text>
-            <Pressable onPress={handleCopy}>
+            <Pressable onPress={handleCopy} disabled={codeLoading}>
               <View style={styles.codeBox}>
-                <Text style={styles.codeText}>{referralCode}</Text>
-                <Text style={styles.copyIcon}>📋</Text>
+                <Text style={styles.codeText}>{codeLoading ? "……" : referralCode}</Text>
+                <Text style={styles.copyIcon}>{codeLoading ? "⏳" : "📋"}</Text>
               </View>
             </Pressable>
             <Text style={styles.cardHint}>{t("referralCodeHint")}</Text>

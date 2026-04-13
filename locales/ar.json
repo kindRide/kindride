@@ -336,5 +336,12 @@
   "driverTier": "المستوى",
   "kindDriver": "سائق لطيف",
   "joinToConnect": "هل تريد التواصل مع هذا السائق؟",
-  "joinToConnectBody": "حمّل KindRide — تطبيق النقل الإنساني المجاني — لطلب رحلة أو التواصل مع السائقين الطيبين في مدينتك."
+  "joinToConnectBody": "حمّل KindRide — تطبيق النقل الإنساني المجاني — لطلب رحلة أو التواصل مع السائقين الطيبين في مدينتك.",
+  "referralCodeOptional": "هل لديك رمز إحالة؟ (اختياري)",
+  "referralCodePlaceholder": "مثال: TUNDE7",
+  "referralCodeAccepted": "تم قبول الرمز — كلاكما يحصل على 50 نقطة بعد رحلتك الأولى!",
+  "referralCodeInvalidHint": "الرمز غير موجود — متابعة بدونه.",
+  "invalidReferralCodeTitle": "رمز غير صالح",
+  "invalidReferralCodeBody": "لم يتم العثور على رمز الإحالة هذا. يمكنك المتابعة بدونه.",
+  "continueAnyway": "متابعة على أي حال"
 }
