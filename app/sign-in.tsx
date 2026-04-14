@@ -163,17 +163,17 @@ export default function SignInScreen() {
                 </View>
               </View>
 
-              <Text style={styles.fieldLabel}>{t('emailCodeLabel', 'Email code')}</Text>
+              <Text style={styles.fieldLabel}>{t('emailCodeLabel', 'Verification code')}</Text>
               <TextInput
                 style={[styles.input, styles.otpInput]}
-                placeholder={t('enterCodePlaceholder', 'Enter code')}
+                placeholder={t('enterCodePlaceholder', 'Enter code from email')}
                 placeholderTextColor="#94a3b8"
                 value={otp}
                 onChangeText={setOtp}
                 keyboardType="number-pad"
                 autoCapitalize="none"
                 autoCorrect={false}
-                maxLength={10}
+                maxLength={8}
                 autoFocus
               />
 
