@@ -43,8 +43,10 @@ import {
   getRideStatusUrlOrNull,
 } from "@/lib/backend-api-urls";
 import { DRIVER_ONBOARDING_KEY } from "@/app/driver-onboarding";
+import BackendStatusBanner from "@/components/BackendStatusBanner";
 import { savePendingPassengerRating } from "@/lib/driver-pending-passenger-rating";
 import { registerRouteCommitment } from "@/lib/route-commitment";
+import { useBackendHealth } from "@/lib/use-backend-health";
 import { supabase } from "@/lib/supabase";
 
 const SCREEN_W = Dimensions.get("window").width;
@@ -267,6 +269,7 @@ export default function DriverDashboardScreen() {
   "use no memo";
   const { t } = useTranslation();
   const router = useRouter();
+  const { status: backendStatus, retry: retryBackend } = useBackendHealth(60_000);
 
   const [session, setSession] = useState<any>(null);
   const [isAvailable, setIsAvailable] = useState(false);
@@ -656,6 +659,9 @@ export default function DriverDashboardScreen() {
               )}
             </View>
           </LinearGradient>
+
+          {/* ── Backend status banner ─────────────────────────────────────────── */}
+          <BackendStatusBanner status={backendStatus} onRetry={retryBackend} />
 
           {/* ── Earnings strip ────────────────────────────────────────────────── */}
           <View style={styles.sectionHeader}>

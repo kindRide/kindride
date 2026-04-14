@@ -715,6 +715,12 @@
   "onbSkip": "Skip walkthrough",
   "onbStartDriving": "Start driving  →",
   "faqTitle": "Frequently Asked Questions",
+  "backendWakingTitle": "Server is waking up…",
+  "backendWakingBody": "KindRide's server is starting up. This takes ~15 seconds on the free tier. Hang tight.",
+  "backendOfflineTitle": "Cannot reach server",
+  "backendOfflineBody": "Check your connection. The server may be temporarily down.",
+  "retryNow": "Retry",
+
   "shareInspireEyebrow": "Tell people the amazing things you do",
   "shareInspireTitle": "You might inspire someone else today",
   "shareInspireBody": "Sharing is 100% optional — but one post could bring the next kind driver into this community.",

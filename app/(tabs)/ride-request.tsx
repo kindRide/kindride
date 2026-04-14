@@ -1,8 +1,8 @@
 import { useFocusEffect } from "@react-navigation/native";
+import * as Location from "expo-location";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import * as Location from "expo-location";
 import {
   ActivityIndicator,
   Alert,
@@ -28,28 +28,30 @@ import {
   getRidesRequestDriverUrlOrNull,
   getRidesStartSearchUrlOrNull,
 } from "@/lib/backend-api-urls";
+import { directionFromPoints } from "@/lib/geo-direction";
+import { createJourneyId } from "@/lib/journey-id";
 import {
   type DriverCard,
   type TravelDirection,
   parseDriverCardsFromApi,
 } from "@/lib/matching-drivers";
-import { directionFromPoints } from "@/lib/geo-direction";
+import { getMultiLegConsent, setMultiLegConsent, shouldRandomlyReaskConsent } from "@/lib/multileg-consent";
 import {
   computeNeedsHandoffForTrip,
   pickDriverBForDirection,
   shouldUseMultiLeg,
 } from "@/lib/multileg-decision";
-import { getMultiLegConsent, setMultiLegConsent, shouldRandomlyReaskConsent } from "@/lib/multileg-consent";
 import { getMultiLegFeatureEnabled, getMultiLegStyle } from "@/lib/multileg-preference";
+import { rideInviteQrValue } from "@/lib/parse-ride-id-from-qr";
 import {
+  type RecentDestination,
   getRecentDestinations,
   rememberDestination,
-  type RecentDestination,
 } from "@/lib/recent-destinations";
-import { createJourneyId } from "@/lib/journey-id";
-import { rideInviteQrValue } from "@/lib/parse-ride-id-from-qr";
 import { getRoadRouteSummary } from "@/lib/road-route";
 import { supabase } from "@/lib/supabase";
+import BackendStatusBanner from "@/components/BackendStatusBanner";
+import { useBackendHealth } from "@/lib/use-backend-health";
 
 /** Real auth driver ids from `driver_presence` / matching API are UUIDs; embedded demo catalog uses small strings. */
 function isAuthUserUuid(id: string): boolean {
@@ -68,6 +70,7 @@ type MatchingFeed = "idle" | "loading" | "live" | "demo" | "fallback";
 export default function RideRequestScreen() {
   const router = useRouter();
   const { t } = useTranslation();
+  const { status: backendStatus, retry: retryBackend } = useBackendHealth(60_000);
   const params = useLocalSearchParams<{
     destinationLat?: string;
     destinationLng?: string;
@@ -97,7 +100,7 @@ export default function RideRequestScreen() {
   const widenedNotifiedRef = useRef(false);
   const [appState, setAppState] = useState<AppStateStatus>(AppState.currentState);
   /** One id per visit to this screen: binds `rides/start-search`, `request-driver`, and Active Trip completion. */
-  const [sessionRideId] = useState(() => createJourneyId());
+  const [sessionRideId, setSessionRideId] = useState(() => createJourneyId());
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", setAppState);
@@ -394,6 +397,11 @@ export default function RideRequestScreen() {
         });
         if (!r.ok) {
           const txt = await r.text().catch(() => "");
+          // If the backend says this ride ID is already used (e.g. from a previous trip on this active tab), generate a fresh one and retry.
+          if (r.status === 409) {
+            setSessionRideId(createJourneyId());
+            return;
+          }
           setDriverStartSearchError(
             t("startSearchFailed", { status: r.status, details: txt.slice(0, 200) })
           );
@@ -966,6 +974,7 @@ export default function RideRequestScreen() {
 
   return (
     <View style={styles.screen}>
+      <BackendStatusBanner status={backendStatus} onRetry={retryBackend} />
       <View style={styles.header}>
         <Text style={styles.title}>{t("rideRequest")}</Text>
         <Text style={styles.destinationLabel}>{t("destinationPointB")}</Text>
