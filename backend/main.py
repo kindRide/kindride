@@ -1741,6 +1741,35 @@ def rides_respond(
                 driver_id,
                 extra={"event_type": "ride_declined", "ride_id": payload.rideId},
             )
+        else:
+            # Notify the passenger their driver is on the way
+            try:
+                passenger_id = str(row.get("passenger_id") or "")
+                if passenger_id:
+                    pt_r = client.get(
+                        _rest_url("/push_tokens"),
+                        params={"user_id": f"eq.{passenger_id}", "select": "push_token", "limit": "1"},
+                        headers=_service_headers(),
+                        timeout=10.0,
+                    )
+                    pt_rows = _rest_json_list(pt_r, "passenger push_token lookup") if pt_r.status_code == 200 else []
+                    if pt_rows:
+                        passenger_token = pt_rows[0].get("push_token")
+                        if passenger_token:
+                            _send_expo_push([{
+                                "to": passenger_token,
+                                "title": "Driver is on the way! 🚗",
+                                "body": "Your driver accepted your request. Track them on the map.",
+                                "sound": "default",
+                                "data": {
+                                    "url": f"/active-trip?rideId={payload.rideId}",
+                                    "rideId": payload.rideId,
+                                    "type": "ride_accepted",
+                                },
+                            }])
+                            logger.info("ride_accepted push sent to passenger=%s", passenger_id)
+            except Exception as exc:
+                logger.warning("ride_accepted push failed (non-fatal): %s", str(exc))
 
     return {
         "ride_id": payload.rideId,
@@ -2924,6 +2953,35 @@ def complete_ride(
             driver_id=completing_driver_id,
             payload=payload,
         )
+
+    # Notify driver of points earned (non-blocking)
+    if completing_driver_id and total_points_awarded > 0:
+        try:
+            with httpx.Client() as client:
+                pt_r = client.get(
+                    _rest_url("/push_tokens"),
+                    params={"user_id": f"eq.{completing_driver_id}", "select": "push_token", "limit": "1"},
+                    headers=_service_headers(),
+                    timeout=10.0,
+                )
+                pt_rows = _rest_json_list(pt_r, "driver push_token completion") if pt_r.status_code == 200 else []
+                if pt_rows:
+                    driver_token = pt_rows[0].get("push_token")
+                    if driver_token:
+                        _send_expo_push([{
+                            "to": driver_token,
+                            "title": f"+{total_points_awarded} points earned! 🌱",
+                            "body": "Trip complete. See your impact score.",
+                            "sound": "default",
+                            "data": {
+                                "url": "/(tabs)/points",
+                                "type": "trip_completed",
+                                "points": total_points_awarded,
+                            },
+                        }])
+                        logger.info("trip_completed push sent to driver=%s pts=%s", completing_driver_id, total_points_awarded)
+        except Exception as exc:
+            logger.warning("trip_completed push failed (non-fatal): %s", str(exc))
 
     # Search for next driver should continue independently of rating (non-blocking).
     # Matching engine hookup happens in the next step; for now we return a signal.

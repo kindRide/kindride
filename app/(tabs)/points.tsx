@@ -217,10 +217,7 @@ export default function PointsScreen() {
 
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const [lastTripReward, setLastTripReward] = useState(earnedPoints);
-  const [pointEvents, setPointEvents] = useState<EventItem[]>([
-    { id: "1", label: t("rideCompleted"), value: 10 },
-    ...(earnedPoints >= 15 ? [{ id: "2", label: t("fiveStarBonus"), value: 5 }] : []),
-  ]);
+  const [pointEvents, setPointEvents] = useState<EventItem[]>([]);
   const [showMilestoneBadge, setShowMilestoneBadge] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
 
@@ -263,7 +260,9 @@ export default function PointsScreen() {
           const positiveSum = mapped.reduce((acc, item) => (item.value > 0 ? acc + item.value : acc), 0);
           setLastTripReward(positiveSum);
         }
-        if (!eventsError && (!eventsRows || eventsRows.length === 0)) {
+        if (!eventsError && (!eventsRows || eventsRows.length === 0) && earnedPoints > 0) {
+          // Just completed a trip but no DB events yet — show the earned points
+          setPointEvents([{ id: "new", label: t("rideCompleted"), value: earnedPoints }]);
           setLastTripReward(earnedPoints);
         }
       } catch {
