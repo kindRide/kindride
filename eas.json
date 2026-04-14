@@ -21,10 +21,7 @@
       "env": {
         "EXPO_PUBLIC_POINTS_REQUIRE_BACKEND": "true",
         "EXPO_PUBLIC_POINTS_API_URL": "https://kindride-api.onrender.com/points/award",
-        "EXPO_PUBLIC_SUPABASE_URL": "https://lobeppmfkjvcawsksxwp.supabase.co",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxvYmVwcG1ma2p2Y2F3c2tzeHdwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzMTc0MTAsImV4cCI6MjA4OTg5MzQxMH0.7MiN204Em_nv4hqSKfB-nRFdhX4bW_XY4pHFkUdDljw",
-        "EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY": "pk_test_51TH0AVKWRTl8C6oRIfrAbB7hQbTrUwKnKSd7Rx6LkEEKwABwYloGdYKzJrbQjVOyhnu2aXMStWVXLqcl4usMxwt900gIDx6CiM",
-        "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "AIzaSyDGvt5z0275kPFCY0b0ftidEQaI5rS8Ba0"
+        "EXPO_PUBLIC_SUPABASE_URL": "https://lobeppmfkjvcawsksxwp.supabase.co"
       },
       "android": {
         "buildType": "apk"
@@ -36,10 +33,7 @@
       "env": {
         "EXPO_PUBLIC_POINTS_REQUIRE_BACKEND": "true",
         "EXPO_PUBLIC_POINTS_API_URL": "https://kindride-api.onrender.com/points/award",
-        "EXPO_PUBLIC_SUPABASE_URL": "https://lobeppmfkjvcawsksxwp.supabase.co",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxvYmVwcG1ma2p2Y2F3c2tzeHdwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzMTc0MTAsImV4cCI6MjA4OTg5MzQxMH0.7MiN204Em_nv4hqSKfB-nRFdhX4bW_XY4pHFkUdDljw",
-        "EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY": "pk_test_51TH0AVKWRTl8C6oRIfrAbB7hQbTrUwKnKSd7Rx6LkEEKwABwYloGdYKzJrbQjVOyhnu2aXMStWVXLqcl4usMxwt900gIDx6CiM",
-        "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "AIzaSyDGvt5z0275kPFCY0b0ftidEQaI5rS8Ba0"
+        "EXPO_PUBLIC_SUPABASE_URL": "https://lobeppmfkjvcawsksxwp.supabase.co"
       },
       "android": {
         "buildType": "app-bundle"
