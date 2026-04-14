@@ -144,7 +144,7 @@ KINDRIDE_ROUTE_COMMITMENT_SECRET = os.getenv(
 # P2.1: Stripe Identity — set STRIPE_WEBHOOK_SECRET to enable webhook verification.
 # Set KINDRIDE_REQUIRE_ID_VERIFIED=true to hard-filter unverified drivers from matching.
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
-KINDRIDE_REQUIRE_ID_VERIFIED = os.getenv("KINDRIDE_REQUIRE_ID_VERIFIED", "false").lower() == "true"
+KINDRIDE_REQUIRE_ID_VERIFIED = os.getenv("KINDRIDE_REQUIRE_ID_VERIFIED", "true").lower() == "true"
 
 # Stripe Connect (voluntary tipping).
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
@@ -161,7 +161,7 @@ except ImportError:
 
 # P2.4: Founding driver cohort — drivers who complete their first presence upsert
 # before this UTC cutoff receive is_founding_driver=true permanently.
-_FOUNDING_COHORT_CUTOFF = datetime(2025, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+_FOUNDING_COHORT_CUTOFF = datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
 
 logger = logging.getLogger("kindride.api")
 
@@ -928,18 +928,14 @@ def _demo_driver_catalog() -> list[DemoDriverCard]:
 @app.get("/matching/demo-drivers", response_model=list[DemoDriverCard])
 def matching_demo_drivers(authorization: str | None = Header(default=None)):
     """
-    Matching feed placeholder: returns a deterministic driver list from the server.
-    Swap this implementation for real routing when GPS + driver availability exist.
-    Caller must send a valid Supabase access token (passenger or driver).
+    Demo driver endpoint — disabled for live testing. Returns empty list.
+    Kept for backwards compatibility so old clients don't crash.
     """
     _require_config()
-    # Matching list can be used in demo mode before sign-in.
     if authorization:
         _verify_user_bearer_token(authorization)
-    catalog = _demo_driver_catalog()
-    catalog.sort(key=lambda d: (-(d.matchScore or 0), d.etaMinutes))
-    logger.info("matching_demo_drivers: serving static catalog (count=%s)", len(catalog))
-    return catalog
+    logger.info("matching_demo_drivers: disabled for live testing, returning empty list")
+    return []
 
 
 def _haversine_miles(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -3167,6 +3163,36 @@ def award_rating_bonus(
     )
 
 
+@app.get("/points/preview")
+@(_limiter.limit("30/minute") if _SLOWAPI_AVAILABLE else lambda f: f)
+def preview_points(
+    request: Request,
+    distanceMiles: float = Query(default=0.0, ge=0, description="Estimated trip distance in miles"),
+    wasZeroDetour: bool = Query(default=True, description="True if driver was already heading this way"),
+    rating: int = Query(default=5, ge=1, le=5, description="Expected passenger rating"),
+):
+    """
+    Returns the exact calculated points for a prospective trip.
+    Fixes Security Audit Issue M2 by making the backend the single source of truth for scoring math.
+    """
+    points = _compute_points(rating, wasZeroDetour, distanceMiles)
+    
+    # Calculate breakdown for frontend UI transparency
+    base_component = 10 + distanceMiles
+    multiplier = 1.5 if wasZeroDetour else 1.0
+    rating_bonus = 5 if rating == 5 else 0
+
+    return {
+        "estimated_points": points,
+        "breakdown": {
+            "base_points": 10,
+            "distance_bonus": distanceMiles,
+            "multiplier": multiplier,
+            "rating_bonus": rating_bonus,
+        }
+    }
+
+
 @app.post("/points/sync")
 @(_limiter.limit("5/minute") if _SLOWAPI_AVAILABLE else lambda f: f)
 def sync_points_ledger(
@@ -3711,7 +3737,7 @@ def connect_onboard(
     # Check if driver already has a Connect account stored.
     with httpx.Client() as client:
         r = client.get(
-            _rest_url("driver_presence"),
+            _rest_url("/driver_presence"),
             headers=_service_headers(),
             params={"driver_id": f"eq.{driver_id}", "select": "stripe_connect_account_id"},
             timeout=8.0,
@@ -3729,7 +3755,7 @@ def connect_onboard(
         # Persist to driver_presence.
         with httpx.Client() as client:
             client.patch(
-                _rest_url("driver_presence"),
+                _rest_url("/driver_presence"),
                 headers={**_service_headers(), "Prefer": "return=minimal"},
                 params={"driver_id": f"eq.{driver_id}"},
                 json={"stripe_connect_account_id": existing_account_id},
@@ -3766,7 +3792,7 @@ def connect_status(
 
     with httpx.Client() as client:
         r = client.get(
-            _rest_url("driver_presence"),
+            _rest_url("/driver_presence"),
             headers=_service_headers(),
             params={"driver_id": f"eq.{driver_id}", "select": "stripe_connect_account_id"},
             timeout=8.0,
@@ -3810,7 +3836,7 @@ def tips_create(
     # Look up driver's Connect account.
     with httpx.Client() as client:
         r = client.get(
-            _rest_url("driver_presence"),
+            _rest_url("/driver_presence"),
             headers=_service_headers(),
             params={
                 "driver_id": f"eq.{payload.driver_id}",
@@ -3847,7 +3873,7 @@ def tips_create(
     # Record pending tip in DB (status updated to 'succeeded' by webhook).
     with httpx.Client() as client:
         client.post(
-            _rest_url("tip_events"),
+            _rest_url("/tip_events"),
             headers={**_service_headers(), "Prefer": "return=minimal"},
             json={
                 "ride_id": payload.ride_id,
@@ -3916,7 +3942,7 @@ async def tips_webhook(request: Request):
 
         with httpx.Client() as client:
             client.patch(
-                _rest_url("tip_events"),
+                _rest_url("/tip_events"),
                 headers={**_service_headers(), "Prefer": "return=minimal"},
                 params={"stripe_payment_intent": f"eq.{intent_id}"},
                 json={"status": "succeeded", "completed_at": datetime.now(timezone.utc).isoformat()},
@@ -3936,7 +3962,7 @@ async def tips_webhook(request: Request):
 
         with httpx.Client() as client:
             client.patch(
-                _rest_url("tip_events"),
+                _rest_url("/tip_events"),
                 headers={**_service_headers(), "Prefer": "return=minimal"},
                 params={"stripe_payment_intent": f"eq.{intent_id}"},
                 json={"status": "failed"},

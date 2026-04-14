@@ -11,7 +11,7 @@ import {
 import * as Location from "expo-location";
 import { useTranslation } from "react-i18next";
 
-import { getMatchingDemoDriversUrlOrNull, getMatchingSearchUrlOrNull } from "@/lib/backend-api-urls";
+import { getMatchingSearchUrlOrNull } from "@/lib/backend-api-urls";
 import {
   type DriverCard,
   type TravelDirection,
@@ -130,8 +130,7 @@ export default function NextLegRequestScreen() {
     let cancelled = false;
     async function loadMatchingList() {
       const searchUrl = getMatchingSearchUrlOrNull();
-      const demoUrl = getMatchingDemoDriversUrlOrNull();
-      let urlToUse = demoUrl;
+      let urlToUse: string | null = null;
       if (searchUrl && originPoint) {
         urlToUse = `${searchUrl}?originLat=${encodeURIComponent(String(originPoint.latitude))}&originLng=${encodeURIComponent(String(originPoint.longitude))}&destinationDirection=${encodeURIComponent(computedDirection)}`;
         if (destinationLat && destinationLng && destinationLat !== "0" && destinationLng !== "0") {
@@ -145,21 +144,11 @@ export default function NextLegRequestScreen() {
         : undefined;
 
       try {
-        let resolvedFromLive = Boolean(searchUrl && originPoint && urlToUse.startsWith(searchUrl));
-        let response = await fetch(urlToUse, {
+        const response = await fetch(urlToUse, {
           headers: {
             ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
           },
         });
-        if (cancelled) return;
-        if (!response.ok && resolvedFromLive && demoUrl) {
-          resolvedFromLive = false;
-          response = await fetch(demoUrl, {
-            headers: {
-              ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-            },
-          });
-        }
         if (cancelled || !response.ok) return;
         const data: unknown = await response.json();
         const parsed = parseDriverCardsFromApi(data);

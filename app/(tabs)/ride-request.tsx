@@ -21,7 +21,6 @@ import {
 import QRCode from "react-native-qrcode-svg";
 
 import {
-  getMatchingDemoDriversUrlOrNull,
   getMatchingSearchUrlOrNull,
   getRideStatusUrlOrNull,
   getRidesCancelPendingUrlOrNull,
@@ -242,8 +241,7 @@ export default function RideRequestScreen() {
 
       try {
         const searchUrl = getMatchingSearchUrlOrNull();
-        const demoUrl = getMatchingDemoDriversUrlOrNull();
-        let urlToUse = demoUrl;
+        let urlToUse: string | null = null;
         if (searchUrl && originPoint) {
           urlToUse = `${searchUrl}?originLat=${encodeURIComponent(String(originPoint.latitude))}&originLng=${encodeURIComponent(String(originPoint.longitude))}&destinationDirection=${encodeURIComponent(destinationDirection)}&radiusMeters=${searchRadius}`;
           if (destination) {
@@ -308,11 +306,10 @@ export default function RideRequestScreen() {
         }
         setDrivers(parsed);
         setMatchingFeedError(null);
-        const usedLiveSearch = Boolean(searchUrl && originPoint && urlToUse.startsWith(searchUrl));
-        setMatchingFeed(usedLiveSearch ? "live" : "demo");
+        setMatchingFeed("live");
         const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
         if (isManual) {
-          if (parsed.length === 0 && usedLiveSearch) {
+          if (parsed.length === 0) {
             setManualRefreshHint(
               t("updatedStillNoDriversHeading", {
                 timestamp,
@@ -326,10 +323,8 @@ export default function RideRequestScreen() {
         if (isBackground) {
           if (parsed.length > 0) {
             setBackgroundPollNote(t("foundDriversAtTime", { count: parsed.length, timestamp }));
-          } else if (usedLiveSearch) {
-            setBackgroundPollNote(t("stillNoMatchLastChecked", { timestamp }));
           } else {
-            setBackgroundPollNote(t("checkedDemoListEmptyAt", { timestamp }));
+            setBackgroundPollNote(t("stillNoMatchLastChecked", { timestamp }));
           }
         }
       } catch (e) {
@@ -1100,7 +1095,7 @@ export default function RideRequestScreen() {
               {t("backgroundPausedText")}
             </Text>
           ) : null}
-          {(matchingFeed === "live" || matchingFeed === "fallback") && (getMatchingSearchUrlOrNull() || getMatchingDemoDriversUrlOrNull()) ? (
+          {(matchingFeed === "live" || matchingFeed === "fallback") && getMatchingSearchUrlOrNull() ? (
             <TouchableOpacity
               activeOpacity={0.85}
               style={[styles.emptyRefreshBtn, listRefreshing && styles.emptyRefreshBtnDisabled]}

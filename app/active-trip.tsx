@@ -18,7 +18,6 @@ import SessionRecorder from "@/components/session-recorder/SessionRecorder";
 import TripSegmentMap from "@/components/trip-segment-map/TripSegmentMap";
 import {
   getJourneysRegisterUrlOrNull,
-  getMatchingDemoDriversUrlOrNull,
   getMatchingSearchUrlOrNull,
   getPassengerReputationUrlOrNull,
   getRidesCompleteUrlOrNull,
@@ -355,9 +354,8 @@ export default function ActiveTripScreen() {
     // If we already pre-matched a next driver, no need to poll.
     if (nextDriver) return;
 
-    const demoUrl = getMatchingDemoDriversUrlOrNull();
     const searchUrl = getMatchingSearchUrlOrNull();
-    if (!demoUrl && !searchUrl) return;
+    if (!searchUrl) return;
 
     let cancelled = false;
     let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -382,24 +380,13 @@ export default function ActiveTripScreen() {
             }
           }
         } catch {
-          // Fall through to demo URL.
-        }
-        if (!urlToUse) {
-          urlToUse = demoUrl;
+          // Could not get location
         }
         if (!urlToUse || cancelled) return;
 
-        let resp = await fetch(urlToUse, {
+        const resp = await fetch(urlToUse, {
           headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
         });
-        if (cancelled) return;
-
-        if (!resp.ok && usedLiveSearch && demoUrl) {
-          usedLiveSearch = false;
-          resp = await fetch(demoUrl, {
-            headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-          });
-        }
 
         if (cancelled) return;
         const data: unknown = resp.ok ? await resp.json() : null;
