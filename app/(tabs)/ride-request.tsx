@@ -774,6 +774,19 @@ export default function RideRequestScreen() {
           <Text style={styles.metaText}>
             {item.tier} · {item.etaMinutes} min · {item.distanceMiles} mi away
           </Text>
+          {item.carMake && item.carModel ? (
+            <View style={styles.vehicleRow}>
+              <Text style={styles.vehicleText}>
+                🚗 {item.carColor ? `${item.carColor} ` : ""}{item.carMake} {item.carModel}
+                {item.carYear ? ` (${item.carYear})` : ""}
+              </Text>
+              {item.carPlate ? (
+                <View style={styles.plateBadge}>
+                  <Text style={styles.plateText}>{item.carPlate}</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
           <Text style={styles.metaText}>
             {t("heading")}: {item.headingDirection[0].toUpperCase() + item.headingDirection.slice(1)}
           </Text>
@@ -967,52 +980,18 @@ export default function RideRequestScreen() {
     );
   };
 
+  const driversVisible = !isScanning && drivers.length > 0;
+
   return (
     <View style={styles.screen}>
       <BackendStatusBanner status={backendStatus} onRetry={retryBackend} />
       <View style={styles.header}>
         <Text style={styles.title}>{t("rideRequest")}</Text>
-        <Text style={styles.destinationLabel}>{t("destinationPointB")}</Text>
-        {recents.length > 0 ? (
-          <View style={styles.recentsSection}>
-            <Text style={styles.recentsTitle}>{t("recentDestinations")}</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentsRow}>
-              {recents.map((r) => (
-                <Pressable
-                  key={`${r.latitude},${r.longitude},${r.label}`}
-                  style={styles.recentChip}
-                  onPress={() => {
-                    void rememberDestination({
-                      label: r.label,
-                      latitude: r.latitude,
-                      longitude: r.longitude,
-                    });
-                    router.setParams({
-                      destinationLat: String(r.latitude),
-                      destinationLng: String(r.longitude),
-                      destinationLabel: r.label,
-                    });
-                  }}
-                >
-                  <Text style={styles.recentChipText} numberOfLines={2}>
-                    {r.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-          </View>
-        ) : null}
-        <View style={styles.destinationCard}>
-          <Text style={styles.destinationValue}>
-            {destination ? destination.label : t("noDestinationSelected")}
-          </Text>
-          <Text style={styles.destinationSub}>
-            {t("routeHeadingUsed", {
-              direction: destinationDirection[0].toUpperCase() + destinationDirection.slice(1),
-            })}
-          </Text>
-          {routeNote ? <Text style={styles.destinationSub}>{routeNote}</Text> : null}
+
+        {/* Collapsed destination pill when drivers are showing */}
+        {driversVisible ? (
           <Pressable
+            style={styles.destinationPill}
             onPress={() =>
               router.push({
                 pathname: "/destination-picker",
@@ -1025,32 +1004,96 @@ export default function RideRequestScreen() {
                   : {},
               })
             }
-            style={styles.destinationButton}
           >
-            <Text style={styles.destinationButtonText}>
-              {destination ? t("updateDestinationPin") : t("pickDestinationPin")}
+            <Text style={styles.destinationPillIcon}>📍</Text>
+            <Text style={styles.destinationPillText} numberOfLines={1}>
+              {destination ? destination.label : t("noDestinationSelected")}
             </Text>
+            <Text style={styles.destinationPillEdit}>{t("edit") || "Edit"}</Text>
           </Pressable>
-          <Text style={styles.sessionRideHint}>
-            {t("rideShareHint")}
-          </Text>
-          <Text style={styles.sessionRideId} selectable>
-            {sessionRideId}
-          </Text>
-          {Platform.OS !== "web" ? (
-            <View style={styles.qrBlock}>
-              <Text style={styles.qrCaption}>{t("rideQrCaption")}</Text>
-              <View style={styles.qrWrap}>
-                <QRCode
-                  value={rideInviteQrValue(sessionRideId)}
-                  size={168}
-                  color="#0f172a"
-                  backgroundColor="#ffffff"
-                />
+        ) : (
+          <>
+            <Text style={styles.destinationLabel}>{t("destinationPointB")}</Text>
+            {recents.length > 0 ? (
+              <View style={styles.recentsSection}>
+                <Text style={styles.recentsTitle}>{t("recentDestinations")}</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentsRow}>
+                  {recents.map((r) => (
+                    <Pressable
+                      key={`${r.latitude},${r.longitude},${r.label}`}
+                      style={styles.recentChip}
+                      onPress={() => {
+                        void rememberDestination({
+                          label: r.label,
+                          latitude: r.latitude,
+                          longitude: r.longitude,
+                        });
+                        router.setParams({
+                          destinationLat: String(r.latitude),
+                          destinationLng: String(r.longitude),
+                          destinationLabel: r.label,
+                        });
+                      }}
+                    >
+                      <Text style={styles.recentChipText} numberOfLines={2}>
+                        {r.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
               </View>
+            ) : null}
+            <View style={styles.destinationCard}>
+              <Text style={styles.destinationValue}>
+                {destination ? destination.label : t("noDestinationSelected")}
+              </Text>
+              <Text style={styles.destinationSub}>
+                {t("routeHeadingUsed", {
+                  direction: destinationDirection[0].toUpperCase() + destinationDirection.slice(1),
+                })}
+              </Text>
+              {routeNote ? <Text style={styles.destinationSub}>{routeNote}</Text> : null}
+              <Pressable
+                onPress={() =>
+                  router.push({
+                    pathname: "/destination-picker",
+                    params: destination
+                      ? {
+                          destinationLat: String(destination.latitude),
+                          destinationLng: String(destination.longitude),
+                          destinationLabel: destination.label,
+                        }
+                      : {},
+                  })
+                }
+                style={styles.destinationButton}
+              >
+                <Text style={styles.destinationButtonText}>
+                  {destination ? t("updateDestinationPin") : t("pickDestinationPin")}
+                </Text>
+              </Pressable>
+              <Text style={styles.sessionRideHint}>
+                {t("rideShareHint")}
+              </Text>
+              <Text style={styles.sessionRideId} selectable>
+                {sessionRideId}
+              </Text>
+              {Platform.OS !== "web" ? (
+                <View style={styles.qrBlock}>
+                  <Text style={styles.qrCaption}>{t("rideQrCaption")}</Text>
+                  <View style={styles.qrWrap}>
+                    <QRCode
+                      value={rideInviteQrValue(sessionRideId)}
+                      size={168}
+                      color="#0f172a"
+                      backgroundColor="#ffffff"
+                    />
+                  </View>
+                </View>
+              ) : null}
             </View>
-          ) : null}
-        </View>
+          </>
+        )}
         {!isScanning ? (
           <Text style={styles.timerText}>{t("searchingRemaining", { time: countdownText })}</Text>
         ) : null}
@@ -1211,6 +1254,30 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#1d4ed8",
     fontWeight: "600",
+  },
+  destinationPill: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#eff6ff",
+    borderWidth: 1,
+    borderColor: "#93c5fd",
+    borderRadius: 20,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    gap: 6,
+  },
+  destinationPillIcon: { fontSize: 13 },
+  destinationPillText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#1d4ed8",
+  },
+  destinationPillEdit: {
+    fontSize: 12,
+    color: "#2563eb",
+    fontWeight: "700",
   },
   destinationLabel: {
     marginTop: 8,
@@ -1387,6 +1454,30 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 13,
     color: "#5f6e94",
+  },
+  vehicleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 4,
+    flexWrap: "wrap",
+  },
+  vehicleText: {
+    fontSize: 13,
+    color: "#1e40af",
+    fontWeight: "500",
+  },
+  plateBadge: {
+    backgroundColor: "#1e3a8a",
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  plateText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#ffffff",
+    letterSpacing: 1,
   },
   intentBadge: {
     alignSelf: "flex-start",

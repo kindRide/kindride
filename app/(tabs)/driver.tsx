@@ -441,9 +441,74 @@ export default function DriverDashboardScreen() {
       if (!supabase || !session?.user?.id) return;
       setSyncing(true);
       try {
+        // Gate: require vehicle details before going online
+        if (available) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("car_make,car_model,car_color,car_plate")
+            .eq("id", session.user.id)
+            .single();
+          const hasVehicle = profile?.car_make && profile?.car_model && profile?.car_color && profile?.car_plate;
+          if (!hasVehicle) {
+            setSyncing(false);
+            Alert.alert(
+              "Vehicle details required",
+              "Passengers need to see your car details before requesting a ride. Add them in Settings → My Vehicle.",
+              [
+                { text: "Cancel", style: "cancel" },
+                { text: "Add vehicle", onPress: () => router.push("/vehicle-details") },
+              ]
+            );
+            return;
+          }
+
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status !== "granted") {
+            Alert.alert(t("locationTitle"), t("driverLocationDenied"));
+            setIsAvailable(false);
+            setSyncing(false);
+            return;
+          }
+          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+
+          let resolvedHeading = overrideHeading || heading;
+          if (!overrideHeading && loc.coords.heading != null && loc.coords.heading >= 0) {
+            const deg = loc.coords.heading;
+            const autoDir =
+              deg >= 315 || deg < 45 ? "north" :
+              deg >= 45 && deg < 135 ? "east" :
+              deg >= 135 && deg < 225 ? "south" : "west";
+            resolvedHeading = autoDir;
+            setHeading(autoDir as typeof heading);
+            setHeadingAutoDetected(true);
+          }
+
+          const { error } = await supabase.from("driver_presence").upsert({
+            driver_id: session.user.id,
+            is_available: true,
+            current_lat: loc.coords.latitude,
+            current_lng: loc.coords.longitude,
+            heading_direction: resolvedHeading,
+            intent: overrideIntent || intent,
+            updated_at: new Date().toISOString(),
+            display_name: displayName.trim() || "Driver",
+            tier: "Helper",
+            car_make:  profile.car_make,
+            car_model: profile.car_model,
+            car_color: profile.car_color,
+            car_plate: profile.car_plate,
+            car_year:  profile.car_year ?? null,
+          });
+          if (error) throw error;
+          setLastSync(new Date());
+          setIsAvailable(true);
+          setSyncing(false);
+          return;
+        }
+
+        // Going offline path (no vehicle check needed)
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== "granted") {
-          if (available) Alert.alert(t("locationTitle"), t("driverLocationDenied"));
           setIsAvailable(false);
           setSyncing(false);
           return;

@@ -358,6 +358,24 @@ export default function SettingsScreen() {
           )}
         </Reanimated.View>
 
+        {/* ── DRIVER VEHICLE ───────────────────────────────────────────────── */}
+        {user && (
+          <>
+            <SectionLabel label="My Vehicle" delay={110} />
+            <Reanimated.View entering={FadeInDown.delay(115).springify()} style={styles.group}>
+              <SettingRow
+                icon="🚗"
+                iconBg="#eff6ff"
+                label="Vehicle Details"
+                sub="Car make, model, color & plate for passengers"
+                onPress={() => router.push("/vehicle-details")}
+                simplified={S}
+                last
+              />
+            </Reanimated.View>
+          </>
+        )}
+
         {/* ── RIDE PREFERENCES ─────────────────────────────────────────────── */}
         <SectionLabel label={t("tripPreferencesLabel", "Ride Preferences")} delay={120} />
         <Reanimated.View entering={FadeInDown.delay(140).springify()} style={styles.group}>

@@ -15,6 +15,12 @@ export type DriverCard = {
   isFoundingDriver?: boolean;
   /** True when driver has completed Stripe Identity verification. */
   idVerified?: boolean;
+  /** Vehicle details shown to passenger */
+  carMake?: string;
+  carModel?: string;
+  carColor?: string;
+  carPlate?: string;
+  carYear?: string;
 };
 
 const TIERS = new Set<DriverTier>([
@@ -78,6 +84,11 @@ export function parseDriverCardsFromApi(data: unknown): DriverCard[] | null {
       ...(matchScore !== undefined ? { matchScore } : {}),
       ...(r.isFoundingDriver === true ? { isFoundingDriver: true } : {}),
       ...(r.idVerified === true ? { idVerified: true } : {}),
+      ...(typeof r.carMake === "string" && r.carMake ? { carMake: r.carMake } : {}),
+      ...(typeof r.carModel === "string" && r.carModel ? { carModel: r.carModel } : {}),
+      ...(typeof r.carColor === "string" && r.carColor ? { carColor: r.carColor } : {}),
+      ...(typeof r.carPlate === "string" && r.carPlate ? { carPlate: r.carPlate } : {}),
+      ...(typeof r.carYear === "string" && r.carYear ? { carYear: r.carYear } : {}),
     });
   }
   return out.length > 0 ? out : null;

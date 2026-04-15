@@ -270,6 +270,53 @@ def _service_headers() -> dict[str, str]:
     }
 
 
+def _ride_transition_conflict_detail(from_status: str, action: str) -> str:
+    """
+    Normalize lifecycle transition conflict details across ride endpoints.
+    """
+    status = (from_status or "unknown").strip().lower() or "unknown"
+    if action == "request_driver":
+        mapping = {
+            "requested": "Transition blocked: ride is already requested with another driver.",
+            "accepted": "Transition blocked: ride already accepted. Start a new ride to request another driver.",
+            "in_progress": "Transition blocked: ride already in progress. Start a new ride to request another driver.",
+            "completed": "Transition blocked: ride already completed. Start a new ride to request another driver.",
+            "cancelled": "Transition blocked: ride cancelled. Start a new ride to request another driver.",
+        }
+        return mapping.get(
+            status,
+            f"Transition blocked: cannot request driver from status '{status}'.",
+        )
+    if action == "respond":
+        mapping = {
+            "searching": (
+                "Transition blocked: no pending request (status=searching). "
+                "The request may have expired (~1 minute) or been reset by the passenger."
+            ),
+            "accepted": "Transition blocked: ride already accepted.",
+            "declined": "Transition blocked: ride already declined.",
+            "expired": "Transition blocked: request expired. Passenger must request again.",
+            "cancelled": "Transition blocked: ride cancelled.",
+            "completed": "Transition blocked: ride already completed.",
+            "in_progress": "Transition blocked: ride already in progress.",
+        }
+        return mapping.get(
+            status,
+            f"Transition blocked: no pending request to respond to (status={status}).",
+        )
+    if action == "complete":
+        mapping = {
+            "declined": "Transition blocked: declined rides cannot be completed.",
+            "expired": "Transition blocked: expired rides cannot be completed.",
+            "cancelled": "Transition blocked: cancelled rides cannot be completed.",
+        }
+        return mapping.get(
+            status,
+            f"Transition blocked: ride is not ready for completion (status={status}).",
+        )
+    return f"Transition blocked: invalid '{action}' action from status '{status}'."
+
+
 def _canonical_json(value: dict) -> str:
     return json.dumps(value, separators=(",", ":"), sort_keys=True)
 
@@ -869,7 +916,7 @@ def _weighted_match_score(
 
 
 class DemoDriverCard(BaseModel):
-    """One driver option in the matching list (MVP: static; later: geo + availability)."""
+    """One driver option in the matching list."""
 
     id: str
     name: str
@@ -884,6 +931,11 @@ class DemoDriverCard(BaseModel):
     )
     isFoundingDriver: bool = Field(default=False, description="True for founding cohort drivers.")
     idVerified: bool = Field(default=False, description="True when Stripe Identity verified.")
+    carMake: str | None = Field(default=None, description="Vehicle make (e.g. Toyota)")
+    carModel: str | None = Field(default=None, description="Vehicle model (e.g. Camry)")
+    carColor: str | None = Field(default=None, description="Vehicle color (e.g. Silver)")
+    carPlate: str | None = Field(default=None, description="License plate")
+    carYear: str | None = Field(default=None, description="Vehicle year (e.g. 2019)")
 
 
 def _demo_driver_catalog() -> list[DemoDriverCard]:
@@ -1248,6 +1300,11 @@ def matching_search(
                     isFoundingDriver=is_founding,
                     idVerified=id_verified,
                     matchScore=score,
+                    carMake=str(row["car_make"]) if row.get("car_make") else None,
+                    carModel=str(row["car_model"]) if row.get("car_model") else None,
+                    carColor=str(row["car_color"]) if row.get("car_color") else None,
+                    carPlate=str(row["car_plate"]) if row.get("car_plate") else None,
+                    carYear=str(row["car_year"]) if row.get("car_year") else None,
                 )
             )
         except Exception:
@@ -1582,9 +1639,9 @@ def rides_request_driver(
             if st == "requested":
                 raise HTTPException(
                     status_code=409,
-                    detail="Already waiting on a different driver. Use /rides/cancel-pending first or wait for expiry.",
+                    detail=_ride_transition_conflict_detail(st, "request_driver"),
                 )
-            raise HTTPException(status_code=409, detail=f"Cannot request driver from status '{st}'.")
+            raise HTTPException(status_code=409, detail=_ride_transition_conflict_detail(st, "request_driver"))
 
         dest_label = row.get("destination_label") if isinstance(row.get("destination_label"), str) else ""
 
@@ -1695,16 +1752,7 @@ def rides_respond(
             raise HTTPException(status_code=403, detail="Another driver already accepted this ride.")
 
         if st != "requested":
-            if st == "searching":
-                detail = (
-                    "No pending request (status=searching). The request may have expired (~1 minute), "
-                    "or the passenger cancelled it. Ask them to tap Request Ride again."
-                )
-            elif st == "accepted":
-                detail = "No pending request (status=accepted). This ride was already accepted."
-            else:
-                detail = f"No pending request (status={st})."
-            raise HTTPException(status_code=409, detail=detail)
+            raise HTTPException(status_code=409, detail=_ride_transition_conflict_detail(st, "respond"))
 
         pending = row.get("pending_driver_id")
         if not pending or str(pending) != driver_id:
@@ -1726,13 +1774,30 @@ def rides_respond(
 
         r = client.patch(
             _rest_url("/rides"),
-            params={"id": f"eq.{payload.rideId}"},
+            params={
+                "id": f"eq.{payload.rideId}",
+                "status": "eq.requested",
+                "pending_driver_id": f"eq.{driver_id}",
+            },
             headers={**_service_headers(), "Prefer": "return=minimal"},
             json=patch,
             timeout=30.0,
         )
         if r.status_code not in (200, 204):
             raise HTTPException(status_code=502, detail=f"rides respond failed: {r.text}")
+        if r.status_code == 200 and not r.text.strip():
+            # Guard against races where the pending row changed after pre-read.
+            latest = _rides_get_by_id(client, payload.rideId)
+            latest_st = str((latest or {}).get("status") or "")
+            if payload.accept and latest_st == "accepted":
+                latest_driver = str((latest or {}).get("driver_id") or "")
+                if latest_driver == driver_id:
+                    return {"ride_id": payload.rideId, "status": "accepted"}
+                raise HTTPException(status_code=403, detail="Another driver already accepted this ride.")
+            raise HTTPException(
+                status_code=409,
+                detail=_ride_transition_conflict_detail(latest_st, "respond"),
+            )
 
         if not payload.accept:
             logger.info(
@@ -2706,7 +2771,7 @@ def complete_ride(
             elif st in ("declined", "expired", "cancelled"):
                 raise HTTPException(
                     status_code=409,
-                    detail=f"Ride is not ready for completion (current status: {st}).",
+                    detail=_ride_transition_conflict_detail(st, "complete"),
                 )
             if not passenger_id_for_analytics and pid:
                 passenger_id_for_analytics = pid
