@@ -946,6 +946,7 @@ class DemoDriverCard(BaseModel):
     carColor: str | None = Field(default=None, description="Vehicle color (e.g. Silver)")
     carPlate: str | None = Field(default=None, description="License plate")
     carYear: str | None = Field(default=None, description="Vehicle year (e.g. 2019)")
+    hubName: str | None = Field(default=None, description="Community hub name if driver is a hub member (e.g. 'UMD')")
 
 
 def _demo_driver_catalog() -> list[DemoDriverCard]:
@@ -1229,8 +1230,9 @@ def matching_search(
     """
     _require_config()
     # Matching search can be used in demo mode before sign-in.
+    passenger_id: str | None = None
     if authorization:
-        _verify_user_bearer_token(authorization)
+        passenger_id = _verify_user_bearer_token(authorization)
 
     search_radius_meters = radiusMeters
     max_results = 20
@@ -1319,6 +1321,64 @@ def matching_search(
             )
         except Exception:
             continue
+
+    # ── Hub enrichment: attach hubName + boost same-hub drivers ──────────────
+    # Best-effort: hub lookup failure never breaks matching.
+    if out:
+        try:
+            with httpx.Client() as hub_client:
+                # 1. Batch-fetch which drivers belong to a hub
+                ids_csv = ",".join(d.id for d in out)
+                rh = hub_client.get(
+                    _rest_url("/hub_members"),
+                    params={
+                        "select": "user_id,hub_id,hub:hubs(name)",
+                        "user_id": f"in.({ids_csv})",
+                        "is_active": "eq.true",
+                    },
+                    headers=_service_headers(),
+                    timeout=10.0,
+                )
+                # map: driver_id → (hub_id, hub_name)
+                driver_hub: dict[str, tuple[str, str]] = {}
+                if rh.status_code == 200:
+                    for hr in rh.json():
+                        uid = hr.get("user_id")
+                        hub_id = hr.get("hub_id")
+                        hub_obj = hr.get("hub")
+                        hub_name = hub_obj.get("name") if isinstance(hub_obj, dict) else None
+                        if uid and hub_id and hub_name and uid not in driver_hub:
+                            driver_hub[uid] = (str(hub_id), str(hub_name))
+
+                # 2. Fetch passenger's hub memberships (if authed) for same-hub boost
+                passenger_hub_ids: set[str] = set()
+                if passenger_id:
+                    rp = hub_client.get(
+                        _rest_url("/hub_members"),
+                        params={
+                            "select": "hub_id",
+                            "user_id": f"eq.{passenger_id}",
+                            "is_active": "eq.true",
+                        },
+                        headers=_service_headers(),
+                        timeout=10.0,
+                    )
+                    if rp.status_code == 200:
+                        for pr in rp.json():
+                            if pr.get("hub_id"):
+                                passenger_hub_ids.add(str(pr["hub_id"]))
+
+                # 3. Apply hubName and same-hub score boost to driver cards
+                for d in out:
+                    hub_entry = driver_hub.get(d.id)
+                    if hub_entry:
+                        hub_id, hub_name = hub_entry
+                        d.hubName = hub_name
+                        # Same-hub drivers get a 25% score boost so they float to the top
+                        if hub_id in passenger_hub_ids and d.matchScore is not None:
+                            d.matchScore = min(1.0, d.matchScore * 1.25)
+        except Exception:
+            pass  # hub lookup is best-effort; matching continues without hub data
 
     results = sorted(out, key=lambda d: (-(d.matchScore or 0), d.etaMinutes))
     logger.info(
