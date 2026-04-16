@@ -1732,6 +1732,18 @@ def rides_cancel_pending(
         if str(row.get("passenger_id")) != passenger_id:
             raise HTTPException(status_code=403, detail="Not your ride.")
         st = str(row.get("status"))
+        if st == "accepted":
+            # Passenger cancelling an accepted ride — hard cancel, driver notified via status poll.
+            r = client.patch(
+                _rest_url("/rides"),
+                params={"id": f"eq.{payload.rideId}"},
+                headers={**_service_headers(), "Prefer": "return=minimal"},
+                json={"status": "cancelled"},
+                timeout=30.0,
+            )
+            if r.status_code not in (200, 204):
+                raise HTTPException(status_code=502, detail=f"cancel-accepted failed: {r.text}")
+            return {"ride_id": payload.rideId, "status": "cancelled"}
         if st != "requested":
             # Not in a cancellable state — treat as no-op so the passenger flow can
             # proceed to the next candidate without surfacing a spurious error.

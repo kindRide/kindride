@@ -534,12 +534,7 @@ export default function ActiveTripScreen() {
 
   const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY?.trim() ?? "";
   const useGoogleProvider = googleMapsApiKey.length > 0;
-  const rideCancelEndpoint = useMemo(() => {
-    const cancelBase = getRidesCancelPendingUrlOrNull();
-    if (!cancelBase) return null;
-    const trimmedBase = cancelBase.replace(/\/rides\/cancel-pending\/?$/, "");
-    return `${trimmedBase}/rides/${encodeURIComponent(rideId)}/cancel`;
-  }, [rideId]);
+  const rideCancelEndpoint = getRidesCancelPendingUrlOrNull();
 
   const mapRegion = useMemo(() => {
     const a = liveDriverLocation || pickupPoint;
@@ -646,10 +641,12 @@ export default function ActiveTripScreen() {
               }
 
               const response = await fetch(rideCancelEndpoint, {
-                method: "DELETE",
+                method: "POST",
                 headers: {
+                  "Content-Type": "application/json",
                   Authorization: `Bearer ${accessToken}`,
                 },
+                body: JSON.stringify({ rideId }),
               });
 
               if (response.status !== 200 && response.status !== 204) {
