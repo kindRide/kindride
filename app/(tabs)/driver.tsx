@@ -46,6 +46,12 @@ import { DRIVER_ONBOARDING_KEY } from "@/app/driver-onboarding";
 import BackendStatusBanner from "@/components/BackendStatusBanner";
 import { savePendingPassengerRating } from "@/lib/driver-pending-passenger-rating";
 import { registerRouteCommitment } from "@/lib/route-commitment";
+import {
+  createRideTraceId,
+  logRideLifecycleEvent,
+  logRideStatusTransition,
+  withRideTraceHeaders,
+} from "@/lib/ride-lifecycle-observability";
 import { useBackendHealth } from "@/lib/use-backend-health";
 import { supabase } from "@/lib/supabase";
 
@@ -297,6 +303,9 @@ export default function DriverDashboardScreen() {
 
   const soundRef = useRef<Audio.Sound | null>(null);
   const knownRideIdsRef = useRef<Set<string>>(new Set());
+  const respondInFlightRef = useRef<Set<string>>(new Set());
+  const lastRideStatusRef = useRef<Map<string, string | null>>(new Map());
+  const lastIncomingPollErrorAtRef = useRef<number>(0);
   const [fadeAnim] = useState(() => new Animated.Value(0));
 
   // ── Audio setup
@@ -327,62 +336,80 @@ export default function DriverDashboardScreen() {
 
   // ── Accept / Decline
   const respondInline = useCallback(async (rideId: string, accept: boolean) => {
+    if (respondInFlightRef.current.has(rideId)) return;
     const endpoint = getRidesRespondUrlOrNull();
     if (!endpoint || !supabase) return;
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token;
     if (!token) return;
+    respondInFlightRef.current.add(rideId);
     setActingRideId(rideId);
     Haptics.impactAsync(accept ? Haptics.ImpactFeedbackStyle.Medium : Haptics.ImpactFeedbackStyle.Light);
+    const readRideStatus = async () => {
+      const statusUrl = getRideStatusUrlOrNull(rideId);
+      if (!statusUrl) return null;
+      const sr = await fetch(statusUrl, {
+        headers: withRideTraceHeaders(
+          { Authorization: `Bearer ${token}` },
+          createRideTraceId("driver-dashboard", rideId, "status-poll")
+        ),
+      });
+      if (!sr.ok) return null;
+      const body = (await sr.json()) as {
+        status?: string;
+        passenger_id?: string | null;
+        pickup_lat?: number | null;
+        pickup_lng?: number | null;
+        destination_lat?: number | null;
+        destination_lng?: number | null;
+        destination_label?: string | null;
+        effective_driver_id?: string | null;
+      };
+      const prev = lastRideStatusRef.current.get(rideId) ?? null;
+      const next = body.status ?? null;
+      logRideStatusTransition("driver-dashboard", rideId, prev, next);
+      lastRideStatusRef.current.set(rideId, next);
+      return body;
+    };
     try {
       const r = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: withRideTraceHeaders(
+          { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          createRideTraceId("driver-dashboard", rideId, accept ? "respond-accept" : "respond-decline")
+        ),
         body: JSON.stringify({ rideId, accept }),
       });
       if (r.ok && accept) {
         let activeTripParams: Record<string, string> = { rideId };
-        const statusUrl = getRideStatusUrlOrNull(rideId);
-        if (statusUrl) {
-          const sr = await fetch(statusUrl, { headers: { Authorization: `Bearer ${token}` } });
-          if (sr.ok) {
-            const sj = (await sr.json()) as {
-              passenger_id?: string | null;
-              pickup_lat?: number | null;
-              pickup_lng?: number | null;
-              destination_lat?: number | null;
-              destination_lng?: number | null;
-              destination_label?: string | null;
-            };
-            if (sj.passenger_id) {
-              await savePendingPassengerRating({ rideId, passengerId: String(sj.passenger_id) });
-            }
-            if (
-              typeof sj.pickup_lat === "number" &&
-              typeof sj.pickup_lng === "number" &&
-              typeof sj.destination_lat === "number" &&
-              typeof sj.destination_lng === "number"
-            ) {
-              try {
-                await registerRouteCommitment({
-                  rideId,
-                  pickup: { latitude: sj.pickup_lat, longitude: sj.pickup_lng },
-                  destination: { latitude: sj.destination_lat, longitude: sj.destination_lng },
-                  declaredIntent: intent === "detour" ? "detour" : "zero_detour",
-                });
-              } catch (e) {
-                console.warn("[route-commitment] driver dashboard registration failed", e);
-              }
-              activeTripParams = {
-                rideId,
-                destinationLat: String(sj.destination_lat),
-                destinationLng: String(sj.destination_lng),
-                ...(typeof sj.destination_label === "string" && sj.destination_label
-                  ? { destinationLabel: sj.destination_label }
-                  : {}),
-              };
-            }
+        const sj = await readRideStatus();
+        if (sj?.passenger_id) {
+          await savePendingPassengerRating({ rideId, passengerId: String(sj.passenger_id) });
+        }
+        if (
+          typeof sj?.pickup_lat === "number" &&
+          typeof sj.pickup_lng === "number" &&
+          typeof sj.destination_lat === "number" &&
+          typeof sj.destination_lng === "number"
+        ) {
+          try {
+            await registerRouteCommitment({
+              rideId,
+              pickup: { latitude: sj.pickup_lat, longitude: sj.pickup_lng },
+              destination: { latitude: sj.destination_lat, longitude: sj.destination_lng },
+              declaredIntent: intent === "detour" ? "detour" : "zero_detour",
+            });
+          } catch (e) {
+            console.warn("[route-commitment] driver dashboard registration failed", e);
           }
+          activeTripParams = {
+            rideId,
+            destinationLat: String(sj.destination_lat),
+            destinationLng: String(sj.destination_lng),
+            ...(typeof sj.destination_label === "string" && sj.destination_label
+              ? { destinationLabel: sj.destination_label }
+              : {}),
+          };
         }
         setIncomingRides((prev) => prev.filter((rd) => rd.ride_id !== rideId));
         setRidesGiven((n) => n + 1);
@@ -397,12 +424,27 @@ export default function DriverDashboardScreen() {
       } else if (r.ok && !accept) {
         setIncomingRides((prev) => prev.filter((rd) => rd.ride_id !== rideId));
       } else {
+        if (r.status === 409 && accept) {
+          const latest = await readRideStatus();
+          const currentDriverId = data.session?.user?.id;
+          if (
+            latest?.status === "accepted" &&
+            latest.effective_driver_id &&
+            currentDriverId &&
+            latest.effective_driver_id === currentDriverId
+          ) {
+            setIncomingRides((prev) => prev.filter((rd) => rd.ride_id !== rideId));
+            router.push({ pathname: "/active-trip", params: { rideId } });
+            return;
+          }
+        }
         const txt = await r.text().catch(() => "");
         Alert.alert(t("error", "Error"), txt || t("unknownError", "Unknown error"));
       }
     } catch {
       Alert.alert(t("networkError", "Network error"), t("checkConnection", "Check your connection."));
     } finally {
+      respondInFlightRef.current.delete(rideId);
       setActingRideId(null);
     }
   }, [intent, router, t]);
@@ -559,10 +601,23 @@ export default function DriverDashboardScreen() {
     const url = getRidesIncomingForDriverUrlOrNull();
     if (!url) return;
     try {
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` } });
+      const res = await fetch(url, {
+        headers: withRideTraceHeaders(
+          { Authorization: `Bearer ${session.access_token}` },
+          createRideTraceId("driver-dashboard", "incoming-list", "incoming-poll")
+        ),
+      });
       if (res.ok) {
         const data = await res.json();
-        const rides: IncomingRide[] = data.rides || [];
+        const allRides: IncomingRide[] = data.rides || [];
+        // Client-side stale filter for expiry race windows between poll ticks.
+        const now = Date.now();
+        const rides = allRides.filter((ride) => {
+          if (!ride.request_expires_at) return true;
+          const expiresAtMs = new Date(ride.request_expires_at).getTime();
+          if (!Number.isFinite(expiresAtMs)) return true;
+          return expiresAtMs > now;
+        });
         setIncomingRides(rides);
         const newRides = rides.filter((r) => !knownRideIdsRef.current.has(r.ride_id));
         const isFirstLoad = knownRideIdsRef.current.size === 0;
@@ -584,9 +639,16 @@ export default function DriverDashboardScreen() {
         knownRideIdsRef.current = new Set(rides.map((r) => r.ride_id));
       }
     } catch {
-      // Silent — prevent background poll disruptions
+      const now = Date.now();
+      if (now - lastIncomingPollErrorAtRef.current > 20_000) {
+        lastIncomingPollErrorAtRef.current = now;
+        logRideLifecycleEvent("driver-dashboard", "incoming_poll_error", {
+          online: isAvailable,
+          hasSession: Boolean(session?.access_token),
+        });
+      }
     }
-  }, [session, soundEnabled]);
+  }, [isAvailable, session, soundEnabled]);
 
   useEffect(() => {
     if (!isAvailable || !session) return;
@@ -763,6 +825,7 @@ export default function DriverDashboardScreen() {
                 const secsLeft = expiresAt ? Math.max(0, Math.round((expiresAt - nowMs) / 1000)) : null;
                 const isUrgent = secsLeft !== null && secsLeft <= 20;
                 const isActing = actingRideId === r.ride_id;
+                const isExpired = secsLeft !== null && secsLeft <= 0;
                 const pts = r.kind_points ?? 15;
                 const dist = r.distance_km != null ? `${r.distance_km.toFixed(1)} km` : null;
                 const vibe: VibeMode | null = (r.vibe as VibeMode) ?? null;
@@ -823,8 +886,8 @@ export default function DriverDashboardScreen() {
                       {/* Actions */}
                       <View style={styles.rideActions}>
                         <Pressable
-                          style={[styles.acceptBtn, (isActing || actingRideId !== null) && styles.btnDisabled]}
-                          disabled={isActing || actingRideId !== null}
+                          style={[styles.acceptBtn, (isActing || actingRideId !== null || isExpired) && styles.btnDisabled]}
+                          disabled={isActing || actingRideId !== null || isExpired}
                           onPress={() => void respondInline(r.ride_id, true)}
                         >
                           <LinearGradient
@@ -833,18 +896,21 @@ export default function DriverDashboardScreen() {
                             end={{ x: 1, y: 0 }}
                             style={styles.acceptGradient}
                           >
-                            <Text style={styles.acceptText}>{isActing ? "…" : t("accept", "Accept")}</Text>
+                            <Text style={styles.acceptText}>
+                              {isExpired ? t("expired", "Expired") : isActing ? "…" : t("accept", "Accept")}
+                            </Text>
                           </LinearGradient>
                         </Pressable>
                         <Pressable
-                          style={[styles.declineBtn, (isActing || actingRideId !== null) && styles.btnDisabled]}
-                          disabled={isActing || actingRideId !== null}
+                          style={[styles.declineBtn, (isActing || actingRideId !== null || isExpired) && styles.btnDisabled]}
+                          disabled={isActing || actingRideId !== null || isExpired}
                           onPress={() => void respondInline(r.ride_id, false)}
                         >
                           <Text style={styles.declineText}>{t("decline", "Decline")}</Text>
                         </Pressable>
                         <Pressable
-                          style={styles.detailBtn}
+                          style={[styles.detailBtn, (isActing || actingRideId !== null) && styles.btnDisabled]}
+                          disabled={isActing || actingRideId !== null}
                           onPress={() => router.push({ pathname: "/incoming-ride", params: { rideId: r.ride_id } })}
                         >
                           <Text style={styles.detailText}>{t("details", "Details")}</Text>

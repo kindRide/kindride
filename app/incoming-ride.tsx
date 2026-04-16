@@ -25,6 +25,10 @@ import {
 } from "@/lib/backend-api-urls";
 import { formatBackendErrorBody } from "@/lib/backend-error";
 import { savePendingPassengerRating } from "@/lib/driver-pending-passenger-rating";
+import {
+  createRideTraceId,
+  withRideTraceHeaders,
+} from "@/lib/ride-lifecycle-observability";
 import { registerRouteCommitment } from "@/lib/route-commitment";
 import { supabase } from "@/lib/supabase";
 
@@ -51,6 +55,7 @@ type RideStatusPayload = {
   ride_id?: string;
   status?: string;
   passenger_id?: string | null;
+  effective_driver_id?: string | null;
   destination_label?: string | null;
   pickup_lat?: number | null;
   pickup_lng?: number | null;
@@ -73,6 +78,40 @@ export default function IncomingRideScreen() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [respondError, setRespondError] = useState<string | null>(null);
   const respondGuard = useRef(false);
+
+  const routeToActiveTrip = (status: RideStatusPayload) => {
+    router.replace({
+      pathname: "/active-trip",
+      params: {
+        rideId,
+        ...(typeof status.destination_label === "string" && status.destination_label
+          ? { destinationLabel: status.destination_label }
+          : {}),
+        ...(typeof status.destination_lat === "number"
+          ? { destinationLat: String(status.destination_lat) }
+          : {}),
+        ...(typeof status.destination_lng === "number"
+          ? { destinationLng: String(status.destination_lng) }
+          : {}),
+      },
+    });
+  };
+
+  const fetchLatestRideStatus = useCallback(
+    async (token: string) => {
+      const statusUrl = getRideStatusUrlOrNull(rideId);
+      if (!statusUrl) return null;
+      const sr = await fetch(statusUrl, {
+        headers: withRideTraceHeaders(
+          { Authorization: `Bearer ${token}` },
+          createRideTraceId("incoming-ride", rideId, "status-poll")
+        ),
+      });
+      if (!sr.ok) return null;
+      return (await sr.json()) as RideStatusPayload;
+    },
+    [rideId]
+  );
 
   const refresh = useCallback(async () => {
     const url = getRideStatusUrlOrNull(rideId);
@@ -100,7 +139,12 @@ export default function IncomingRideScreen() {
     // After QR scan the passenger may still be registering the ride — brief 404 is common.
     const maxAttempts = 6;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const r = await fetch(url, {
+        headers: withRideTraceHeaders(
+          { Authorization: `Bearer ${token}` },
+          createRideTraceId("incoming-ride", rideId, "status-poll")
+        ),
+      });
       const text = await r.text();
       if (r.ok) {
         try {
@@ -152,33 +196,29 @@ export default function IncomingRideScreen() {
       setActing(true);
       const r = await fetch(endpoint, {
         method: "POST",
-        headers: {
+        headers: withRideTraceHeaders({
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
-        },
+        }, createRideTraceId("incoming-ride", rideId, accept ? "respond-accept" : "respond-decline")),
         body: JSON.stringify({ rideId, accept }),
       });
       const raw = await r.text();
       if (!r.ok) {
         if (r.status === 409) {
+          const latest = await fetchLatestRideStatus(token);
+          if (accept && latest?.status === "accepted" && latest.effective_driver_id === data.session?.user?.id) {
+            setDetail(latest);
+            routeToActiveTrip(latest);
+            return;
+          }
           await refresh();
         }
         setRespondError(formatBackendErrorBody(raw, r.status));
         return;
       }
       if (accept) {
-        const statusUrl = getRideStatusUrlOrNull(rideId);
-        if (statusUrl) {
-          const sr = await fetch(statusUrl, { headers: { Authorization: `Bearer ${token}` } });
-          if (sr.ok) {
-            const sj = (await sr.json()) as {
-              passenger_id?: string | null;
-              pickup_lat?: number | null;
-              pickup_lng?: number | null;
-              destination_lat?: number | null;
-              destination_lng?: number | null;
-              destination_label?: string | null;
-            };
+        const sj = await fetchLatestRideStatus(token);
+        if (sj) {
             const pid = sj.passenger_id;
             if (pid) {
               await savePendingPassengerRating({ rideId, passengerId: String(pid) });
@@ -208,23 +248,8 @@ export default function IncomingRideScreen() {
               }
             }
             await refresh();
-            router.replace({
-              pathname: "/active-trip",
-              params: {
-                rideId,
-                ...(typeof sj.destination_label === "string" && sj.destination_label
-                  ? { destinationLabel: sj.destination_label }
-                  : {}),
-                ...(typeof sj.destination_lat === "number"
-                  ? { destinationLat: String(sj.destination_lat) }
-                  : {}),
-                ...(typeof sj.destination_lng === "number"
-                  ? { destinationLng: String(sj.destination_lng) }
-                  : {}),
-              },
-            });
+            routeToActiveTrip(sj);
             return;
-          }
         }
       }
       await refresh();
@@ -356,6 +381,8 @@ export default function IncomingRideScreen() {
               ? t("requestDeclined", "You declined this request. The passenger will be shown the next available driver.")
               : st === "expired"
                 ? t("requestExpired", "This request expired (60 s window passed). The passenger can request another driver.")
+                : st === "cancelled"
+                  ? t("requestCancelled", "This request was cancelled by the passenger or system.")
                 : st === "searching"
                   ? t("requestNoLongerPending", "This request is no longer pending.")
                   : t("noPendingDriverAction", "No pending driver action for this ride.")}

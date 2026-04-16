@@ -1,5 +1,5 @@
 import { Link, type Href, useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as Location from "expo-location";
 import {
@@ -33,6 +33,12 @@ import {
   type TravelDirection,
 } from "@/lib/matching-drivers";
 import { attestRouteCommitment } from "@/lib/route-commitment";
+import {
+  createRideTraceId,
+  logRideLifecycleEvent,
+  logRideStatusTransition,
+  withRideTraceHeaders,
+} from "@/lib/ride-lifecycle-observability";
 import { supabase } from "@/lib/supabase";
 
 export default function ActiveTripScreen() {
@@ -100,6 +106,11 @@ export default function ActiveTripScreen() {
   const [isSearchingNextDriver, setIsSearchingNextDriver] = useState(false);
   const [rideStatus, setRideStatus] = useState<string | null>(null);
   const [ridePassengerId, setRidePassengerId] = useState<string | null>(null);
+  const statusRequestSeqRef = useRef(0);
+  const lastPolledStatusRef = useRef<string | null>(null);
+  const lastPollErrorAtRef = useRef<number>(0);
+  const completeInFlightRef = useRef(false);
+  const shareInFlightRef = useRef(false);
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [liveDriverLocation, setLiveDriverLocation] = useState<LatLng | null>(null);
@@ -191,6 +202,24 @@ export default function ActiveTripScreen() {
   const [shareError, setShareError] = useState<string | null>(null);
 
   const ridesCompleteEndpoint = getRidesCompleteUrlOrNull();
+  const fetchRideStatusOnce = useCallback(async () => {
+    if (!rideId || !supabase) return null;
+    const statusUrl = getRideStatusUrlOrNull(rideId);
+    if (!statusUrl) return null;
+    const token = (await supabase.auth.getSession()).data.session?.access_token;
+    if (!token) return null;
+    const traceId = createRideTraceId("active-trip", rideId, "status-poll");
+    const resp = await fetch(statusUrl, {
+      method: "GET",
+      headers: withRideTraceHeaders({
+        Authorization: `Bearer ${token}`,
+      }, traceId),
+    });
+    if (!resp.ok) {
+      return null;
+    }
+    return (await resp.json()) as { status?: string; passenger_id?: string | null };
+  }, [rideId]);
 
   // Auto-start a journey ONLY when the app believes a handoff will be needed.
   // This keeps multi-leg as a last resort, app-driven behavior.
@@ -230,32 +259,29 @@ export default function ActiveTripScreen() {
 
   useEffect(() => {
     if (!rideId) return;
-    const statusUrl = getRideStatusUrlOrNull(rideId);
-    if (!statusUrl || !supabase) return;
+    if (!supabase) return;
 
     let cancelled = false;
-    const supabaseClient = supabase;
     const fetchStatus = async () => {
-      if (!supabaseClient) return;
+      const requestSeq = ++statusRequestSeqRef.current;
       try {
-        const token = (await supabaseClient.auth.getSession()).data.session?.access_token;
-        if (!token || cancelled) return;
-        const resp = await fetch(statusUrl, {
-          method: "GET",
-          headers: {
-            "Authorization": `Bearer ${token}`,
-          },
-        });
-        if (!resp.ok) {
-          return;
-        }
-        const body = (await resp.json()) as { status?: string; passenger_id?: string | null };
-        if (cancelled) return;
+        const body = await fetchRideStatusOnce();
+        if (!body || cancelled || requestSeq !== statusRequestSeqRef.current) return;
+        logRideStatusTransition(
+          "active-trip",
+          rideId,
+          lastPolledStatusRef.current,
+          body.status ?? null
+        );
+        lastPolledStatusRef.current = body.status ?? null;
         setRideStatus(body.status ?? null);
         if (body.passenger_id) setRidePassengerId(body.passenger_id);
       } catch {
-        if (!cancelled) {
-          setRideStatus(null);
+        if (cancelled) return;
+        const now = Date.now();
+        if (now - lastPollErrorAtRef.current > 20_000) {
+          lastPollErrorAtRef.current = now;
+          logRideLifecycleEvent("active-trip", "status_poll_error", { rideId });
         }
       }
     };
@@ -266,7 +292,7 @@ export default function ActiveTripScreen() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [rideId]);
+  }, [fetchRideStatusOnce, rideId]);
 
   // Live GPS Watcher: If current user is the driver, broadcast location rapidly
   useEffect(() => {
@@ -527,6 +553,7 @@ export default function ActiveTripScreen() {
   }, [pickupPoint, dropoffPoint, liveDriverLocation]);
 
   const shareTrip = async () => {
+    if (shareInFlightRef.current) return;
     if (!rideId) {
       Alert.alert(t("shareTrip"), t("shareTripNoRideId"));
       return;
@@ -546,6 +573,7 @@ export default function ActiveTripScreen() {
     }
 
     setShareError(null);
+    shareInFlightRef.current = true;
     setIsSharing(true);
     try {
       const response = await fetch(url, {
@@ -573,6 +601,7 @@ export default function ActiveTripScreen() {
       setShareError(message);
       Alert.alert(t("shareTrip"), message);
     } finally {
+      shareInFlightRef.current = false;
       setIsSharing(false);
     }
   };
@@ -695,20 +724,36 @@ export default function ActiveTripScreen() {
         </View>
         <Pressable
           onPress={async () => {
-            if (isCompletingRide) return;
+            if (isCompletingRide || completeInFlightRef.current) return;
+            completeInFlightRef.current = true;
             if (!ridesCompleteEndpoint) {
               Alert.alert(
                 t("backendNotConfigured"),
                 t("backendMissingEndpoint")
               );
+              completeInFlightRef.current = false;
               return;
             }
 
-            if (rideStatus && !["accepted", "in_progress", "completed"].includes(rideStatus)) {
+            let latestStatusResponse: { status?: string; passenger_id?: string | null } | null = null;
+            try {
+              latestStatusResponse = await fetchRideStatusOnce();
+            } catch {
+              completeInFlightRef.current = false;
+              Alert.alert(t("rideNotReady"), t("checkConnection", "Check your connection."));
+              return;
+            }
+            const effectiveStatus = latestStatusResponse?.status ?? rideStatus;
+            if (latestStatusResponse?.passenger_id) {
+              setRidePassengerId(latestStatusResponse.passenger_id);
+            }
+            if (effectiveStatus && !["accepted", "in_progress", "completed"].includes(effectiveStatus)) {
+              setRideStatus(effectiveStatus);
               Alert.alert(
                 t("rideNotReady"),
-                t("rideStatusWait", { status: rideStatus })
+                t("rideStatusWait", { status: effectiveStatus })
               );
+              completeInFlightRef.current = false;
               return;
             }
 
@@ -740,6 +785,7 @@ export default function ActiveTripScreen() {
                 t("tripDistance"),
                 t("enterMilesWarning")
               );
+              completeInFlightRef.current = false;
               return;
             }
 
@@ -799,10 +845,10 @@ export default function ActiveTripScreen() {
 
               const response = await fetch(ridesCompleteEndpoint, {
                 method: "POST",
-                headers: {
+                headers: withRideTraceHeaders({
                   "Content-Type": "application/json",
                   ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-                },
+                }, createRideTraceId("active-trip", rideId, "complete")),
                 body: JSON.stringify(payload),
               });
 
@@ -848,6 +894,7 @@ export default function ActiveTripScreen() {
               );
             } finally {
               setIsCompletingRide(false);
+              completeInFlightRef.current = false;
             }
           }}
           disabled={isCompletingRide}
