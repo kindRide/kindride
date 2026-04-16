@@ -47,7 +47,20 @@ type RideRow = {
   kind_points: number | null;
 };
 
-type Tab = 'sos' | 'drivers' | 'rides';
+type HubRow = {
+  id: string;
+  name: string;
+  type: string;
+  slug: string;
+  verified: boolean;
+  subscription_tier: string;
+  approved_by: string | null;
+  admin_user_id: string | null;
+  created_at: string;
+  member_count?: number;
+};
+
+type Tab = 'sos' | 'drivers' | 'rides' | 'hubs';
 
 // ─── Tab bar ─────────────────────────────────────────────────────────────────
 
@@ -56,6 +69,7 @@ function TabBar({ active, onSelect }: { active: Tab; onSelect: (t: Tab) => void 
     { key: 'sos',     label: 'SOS',     icon: '🆘' },
     { key: 'drivers', label: 'Drivers', icon: '🚗' },
     { key: 'rides',   label: 'Rides',   icon: '📋' },
+    { key: 'hubs',    label: 'Hubs',    icon: '🏘️' },
   ];
   return (
     <View style={styles.tabBar}>
@@ -96,6 +110,11 @@ export default function AdminScreen() {
   // Rides state
   const [rides, setRides] = useState<RideRow[]>([]);
   const [ridesRefreshing, setRidesRefreshing] = useState(false);
+
+  // Hubs state
+  const [hubs, setHubs] = useState<HubRow[]>([]);
+  const [hubsRefreshing, setHubsRefreshing] = useState(false);
+  const [founderId, setFounderId] = useState<string | null>(null);
 
   // ── Data fetchers ──────────────────────────────────────────────────────────
 
@@ -172,6 +191,34 @@ export default function AdminScreen() {
     }
   }, []);
 
+  const fetchHubs = useCallback(async () => {
+    if (!supabase) return;
+    try {
+      // Service role bypasses RLS so we see ALL hubs including unapproved
+      const { data, error } = await supabase
+        .from('hubs')
+        .select('id, name, type, slug, verified, subscription_tier, approved_by, admin_user_id, created_at')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+
+      // Attach member counts
+      const rows = (data ?? []) as HubRow[];
+      const withCounts = await Promise.all(
+        rows.map(async (h) => {
+          const { count } = await supabase!
+            .from('hub_members')
+            .select('user_id', { count: 'exact', head: true })
+            .eq('hub_id', h.id)
+            .eq('is_active', true);
+          return { ...h, member_count: count ?? 0 };
+        })
+      );
+      setHubs(withCounts);
+    } catch {
+      Alert.alert('Error', 'Failed to load hubs.');
+    }
+  }, []);
+
   // ── Auth + initial load ────────────────────────────────────────────────────
 
   const checkAdminAccess = useCallback(async () => {
@@ -188,14 +235,15 @@ export default function AdminScreen() {
         setIsAdmin(false);
       } else {
         setIsAdmin(true);
-        await Promise.all([fetchSosRequests(), fetchDrivers(), fetchRides()]);
+        setFounderId(session.user.id);
+        await Promise.all([fetchSosRequests(), fetchDrivers(), fetchRides(), fetchHubs()]);
       }
     } catch {
       setIsAdmin(false);
     } finally {
       setLoading(false);
     }
-  }, [fetchSosRequests, fetchDrivers, fetchRides]);
+  }, [fetchSosRequests, fetchDrivers, fetchRides, fetchHubs]);
 
   useEffect(() => { checkAdminAccess(); }, [checkAdminAccess]);
 
@@ -240,6 +288,63 @@ export default function AdminScreen() {
               );
             } catch {
               Alert.alert('Error', 'Failed to suspend driver.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // ── Hub actions ──────────────────────────────────────────────────────────
+
+  const approveHub = (hub: HubRow) => {
+    Alert.alert(
+      'Approve hub',
+      `Allow "${hub.name}" to go live? Members will be able to join via kindride.app/join/${hub.slug}.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Approve',
+          onPress: async () => {
+            if (!supabase || !founderId) return;
+            try {
+              const { error } = await supabase
+                .from('hubs')
+                .update({ approved_by: founderId, verified: true })
+                .eq('id', hub.id);
+              if (error) throw error;
+              setHubs(prev => prev.map(h =>
+                h.id === hub.id ? { ...h, approved_by: founderId, verified: true } : h
+              ));
+            } catch {
+              Alert.alert('Error', 'Failed to approve hub.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const rejectHub = (hub: HubRow) => {
+    Alert.alert(
+      'Reject hub',
+      `Remove "${hub.name}" from the platform? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reject & delete',
+          style: 'destructive',
+          onPress: async () => {
+            if (!supabase) return;
+            try {
+              const { error } = await supabase
+                .from('hubs')
+                .delete()
+                .eq('id', hub.id);
+              if (error) throw error;
+              setHubs(prev => prev.filter(h => h.id !== hub.id));
+            } catch {
+              Alert.alert('Error', 'Failed to reject hub.');
             }
           },
         },
@@ -384,6 +489,7 @@ export default function AdminScreen() {
   const recentRides = rides.filter(r =>
     Date.now() - new Date(r.created_at).getTime() < 24 * 60 * 60 * 1000
   ).length;
+  const pendingHubs = hubs.filter(h => !h.approved_by).length;
 
   // ── JSX ───────────────────────────────────────────────────────────────────
 
@@ -414,6 +520,11 @@ export default function AdminScreen() {
         <View style={styles.statItem}>
           <Text style={styles.statValue}>{recentRides}</Text>
           <Text style={styles.statLabel}>Rides (24h)</Text>
+        </View>
+        <View style={styles.statDivider} />
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, pendingHubs > 0 && styles.statValueAlert]}>{pendingHubs}</Text>
+          <Text style={styles.statLabel}>Hubs Pending</Text>
         </View>
       </View>
 
@@ -477,6 +588,85 @@ export default function AdminScreen() {
             <Text style={styles.tabHint}>Most recent 60 rides across all users</Text>
           }
           ListEmptyComponent={<Text style={styles.emptyText}>No rides found.</Text>}
+        />
+      )}
+
+      {/* Hubs tab */}
+      {activeTab === 'hubs' && (
+        <FlatList
+          data={hubs}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl
+              refreshing={hubsRefreshing}
+              onRefresh={async () => { setHubsRefreshing(true); await fetchHubs(); setHubsRefreshing(false); }}
+            />
+          }
+          ListHeaderComponent={
+            <Text style={styles.tabHint}>
+              {hubs.length} hub{hubs.length !== 1 ? 's' : ''} total
+              {pendingHubs > 0 ? ` · ${pendingHubs} awaiting approval` : ' · all approved'}
+            </Text>
+          }
+          ListEmptyComponent={<Text style={styles.emptyText}>No hubs yet.</Text>}
+          renderItem={({ item }) => {
+            const isApproved = !!item.approved_by;
+            const HUB_TYPE_ICON: Record<string, string> = {
+              university: '🎓', church: '⛪', nonprofit: '🤝', corporate: '🏢',
+            };
+            return (
+              <View style={[styles.card, !isApproved && styles.cardUrgent]}>
+                <View style={styles.cardHeader}>
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text style={styles.messageText}>
+                      {HUB_TYPE_ICON[item.type] ?? '🏘️'} {item.name}
+                    </Text>
+                    <Text style={styles.mutedText}>
+                      kindride.app/join/{item.slug} · {item.type} · {item.subscription_tier}
+                    </Text>
+                  </View>
+                  <View style={[styles.badge, isApproved ? styles.badgeGreen : styles.badgeYellow]}>
+                    <Text style={styles.badgeText}>{isApproved ? 'LIVE' : 'PENDING'}</Text>
+                  </View>
+                </View>
+
+                <View style={styles.hubMetaRow}>
+                  <View style={styles.hubStatChip}>
+                    <Text style={styles.hubStatValue}>{item.member_count ?? 0}</Text>
+                    <Text style={styles.hubStatLabel}>members</Text>
+                  </View>
+                  <View style={styles.hubStatChip}>
+                    <Text style={styles.hubStatValue}>{item.subscription_tier}</Text>
+                    <Text style={styles.hubStatLabel}>plan</Text>
+                  </View>
+                  <View style={styles.hubStatChip}>
+                    <Text style={styles.hubStatValue}>
+                      {new Date(item.created_at).toLocaleDateString()}
+                    </Text>
+                    <Text style={styles.hubStatLabel}>created</Text>
+                  </View>
+                </View>
+
+                <View style={styles.actionRow}>
+                  {!isApproved && (
+                    <Pressable
+                      style={[styles.actionBtn, styles.btnResolve]}
+                      onPress={() => approveHub(item)}
+                    >
+                      <Text style={styles.actionBtnText}>Approve & go live</Text>
+                    </Pressable>
+                  )}
+                  <Pressable
+                    style={[styles.actionBtn, styles.btnSuspend]}
+                    onPress={() => rejectHub(item)}
+                  >
+                    <Text style={styles.actionBtnText}>{isApproved ? 'Remove' : 'Reject'}</Text>
+                  </Pressable>
+                </View>
+              </View>
+            );
+          }}
         />
       )}
 
@@ -579,4 +769,13 @@ const styles = StyleSheet.create({
   rideRoute: { fontSize: 14, color: '#0f172a', fontWeight: '500', marginBottom: 8 },
   rideFooter: { flexDirection: 'row', gap: 12, alignItems: 'center' },
   pointsText: { fontSize: 12, fontWeight: '700', color: '#0d9488', marginLeft: 'auto' },
+
+  // Hub-specific
+  hubMetaRow: { flexDirection: 'row', gap: 8, marginTop: 10, marginBottom: 4 },
+  hubStatChip: {
+    flex: 1, alignItems: 'center', backgroundColor: '#f8fafc',
+    borderRadius: 8, paddingVertical: 6, borderWidth: 1, borderColor: '#e2e8f0',
+  },
+  hubStatValue: { fontSize: 13, fontWeight: '700', color: '#0f172a' },
+  hubStatLabel: { fontSize: 10, color: '#94a3b8', fontWeight: '600', marginTop: 1 },
 });
