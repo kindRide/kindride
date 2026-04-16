@@ -879,6 +879,11 @@ export default function RideRequestScreen() {
                 <Text style={styles.verifiedBadgeText}>✓ {t("verified")}</Text>
               </View>
             ) : null}
+            {item.hubName ? (
+              <View style={styles.hubBadge}>
+                <Text style={styles.hubBadgeText}>🏫 {item.hubName} Driver</Text>
+              </View>
+            ) : null}
           </View>
           <View
             style={[
@@ -1619,6 +1624,19 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
     color: "#166534",
+  },
+  hubBadge: {
+    backgroundColor: "#eff6ff",
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: "#bfdbfe",
+  },
+  hubBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#1d4ed8",
   },
   requestButton: {
     backgroundColor: "#2563eb",

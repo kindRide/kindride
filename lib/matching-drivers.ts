@@ -21,6 +21,8 @@ export type DriverCard = {
   carColor?: string;
   carPlate?: string;
   carYear?: string;
+  /** Community hub name if driver belongs to a hub (e.g. "UMD") */
+  hubName?: string;
 };
 
 const TIERS = new Set<DriverTier>([
@@ -89,6 +91,7 @@ export function parseDriverCardsFromApi(data: unknown): DriverCard[] | null {
       ...(typeof r.carColor === "string" && r.carColor ? { carColor: r.carColor } : {}),
       ...(typeof r.carPlate === "string" && r.carPlate ? { carPlate: r.carPlate } : {}),
       ...(typeof r.carYear === "string" && r.carYear ? { carYear: r.carYear } : {}),
+      ...(typeof r.hubName === "string" && r.hubName ? { hubName: r.hubName } : {}),
     });
   }
   return out.length > 0 ? out : null;

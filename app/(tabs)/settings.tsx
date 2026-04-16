@@ -21,6 +21,7 @@ import { useTranslation } from "react-i18next";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { useAuth } from "@/lib/auth";
+import { supabase } from "@/lib/supabase";
 import {
   getMultiLegFeatureEnabled,
   getMultiLegStyle,
@@ -153,6 +154,7 @@ export default function SettingsScreen() {
   const [notifWeekly, setNotifWeekly] = useState(true);
   const [notifStreak, setNotifStreak] = useState(true);
   const [safetyRecording, setSafetyRecording] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     const onLngChange = (lng: string) => setCurrentLanguage(lng);
@@ -177,6 +179,20 @@ export default function SettingsScreen() {
           setDefaultVibe((vibe as VibeMode) ?? "chat");
           setHydrated(true);
         }
+        // Role check for admin entry point — silent, never throws
+        try {
+          if (supabase) {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session && !cancelled) {
+              const { data } = await supabase
+                .from("profiles")
+                .select("role")
+                .eq("id", session.user.id)
+                .single();
+              if (!cancelled) setIsAdmin(data?.role === "admin");
+            }
+          }
+        } catch { /* silently ignore */ }
       })();
       return () => { cancelled = true; };
     }, [])
@@ -625,6 +641,24 @@ export default function SettingsScreen() {
             last
           />
         </Reanimated.View>
+
+        {/* ── PLATFORM (admin only — hidden from regular users) ─────────────── */}
+        {isAdmin && (
+          <>
+            <SectionLabel label="Platform" delay={395} />
+            <Reanimated.View entering={FadeInDown.delay(398).springify()} style={styles.group}>
+              <SettingRow
+                icon="🛠️"
+                iconBg="#f0fdf4"
+                label="Admin Panel"
+                sub="Driver management, SOS queue, ride feed"
+                onPress={() => router.push("/admin")}
+                simplified={S}
+                last
+              />
+            </Reanimated.View>
+          </>
+        )}
 
         {/* ── Privacy mission card ─────────────────────────────────────────── */}
         <Reanimated.View entering={FadeInDown.delay(400).springify()} style={styles.missionWrap}>
