@@ -317,6 +317,16 @@ def _ride_transition_conflict_detail(from_status: str, action: str) -> str:
     return f"Transition blocked: invalid '{action}' action from status '{status}'."
 
 
+def _request_trace_id(request: Request | None) -> str | None:
+    if request is None:
+        return None
+    raw = request.headers.get("x-kindride-trace-id", "").strip()
+    if not raw:
+        return None
+    # Keep traces bounded for logs/storage.
+    return raw[:128]
+
+
 def _canonical_json(value: dict) -> str:
     return json.dumps(value, separators=(",", ":"), sort_keys=True)
 
@@ -1560,6 +1570,15 @@ def rides_start_search(
                 status_code=409,
                 detail=f"Ride is already {existing.get('status')}; create a new rideId for a new trip.",
             )
+        # Don't reset an active pending request back to searching — the passenger should wait
+        # for the driver to accept/decline, or call /rides/cancel-pending first.
+        if existing and str(existing.get("status")) == "requested":
+            return {
+                "ride_id": payload.rideId,
+                "status": "requested",
+                "updated_at": now,
+                "no_op": True,
+            }
 
         r = client.post(
             _rest_url("/rides"),
@@ -1589,10 +1608,18 @@ def rides_request_driver(
 ):
     _require_config()
     passenger_id = _verify_user_bearer_token(authorization)
+    trace_id = _request_trace_id(request)
+    logger.info(
+        "rides_request_driver trace=%s ride_id=%s passenger_id=%s driver_id=%s",
+        trace_id,
+        payload.rideId,
+        passenger_id,
+        payload.driverId,
+    )
     if payload.driverId == passenger_id:
         raise HTTPException(status_code=400, detail="Cannot request yourself as driver.")
 
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=65)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=90)
 
     with httpx.Client() as client:
         row = _rides_get_by_id(client, payload.rideId)
@@ -1706,10 +1733,9 @@ def rides_cancel_pending(
             raise HTTPException(status_code=403, detail="Not your ride.")
         st = str(row.get("status"))
         if st != "requested":
-            raise HTTPException(
-                status_code=409,
-                detail=f"Nothing to cancel (status={st}).",
-            )
+            # Not in a cancellable state — treat as no-op so the passenger flow can
+            # proceed to the next candidate without surfacing a spurious error.
+            return {"ride_id": payload.rideId, "status": st, "no_op": True}
         r = client.patch(
             _rest_url("/rides"),
             params={"id": f"eq.{payload.rideId}"},
@@ -1736,6 +1762,14 @@ def rides_respond(
 ):
     _require_config()
     driver_id = _verify_user_bearer_token(authorization)
+    trace_id = _request_trace_id(request)
+    logger.info(
+        "rides_respond trace=%s ride_id=%s driver_id=%s accept=%s",
+        trace_id,
+        payload.rideId,
+        driver_id,
+        payload.accept,
+    )
 
     with httpx.Client() as client:
         row = _rides_get_by_id(client, payload.rideId)
@@ -1779,14 +1813,25 @@ def rides_respond(
                 "status": "eq.requested",
                 "pending_driver_id": f"eq.{driver_id}",
             },
-            headers={**_service_headers(), "Prefer": "return=minimal"},
+            # Use return=representation so PostgREST returns [] when 0 rows matched
+            # (race: pending_driver_id or status changed between pre-read and write).
+            # With return=minimal we always get 204 and cannot detect the race.
+            headers={**_service_headers(), "Prefer": "return=representation"},
             json=patch,
             timeout=30.0,
         )
-        if r.status_code not in (200, 204):
+        if r.status_code not in (200, 201, 204):
             raise HTTPException(status_code=502, detail=f"rides respond failed: {r.text}")
-        if r.status_code == 200 and not r.text.strip():
-            # Guard against races where the pending row changed after pre-read.
+        # Detect 0-row race: PostgREST returns 200 with [] when WHERE matched nothing.
+        updated_rows: list = []
+        try:
+            body = r.json()
+            if isinstance(body, list):
+                updated_rows = body
+        except Exception:
+            pass
+        if r.status_code in (200, 201) and len(updated_rows) == 0:
+            # No rows updated — race: status or pending_driver_id changed after pre-read.
             latest = _rides_get_by_id(client, payload.rideId)
             latest_st = str((latest or {}).get("status") or "")
             if payload.accept and latest_st == "accepted":
@@ -1844,6 +1889,7 @@ def rides_respond(
 
 @app.get("/rides/incoming-for-driver")
 def rides_incoming_for_driver(
+    request: Request,
     authorization: str | None = Header(default=None),
 ):
     """
@@ -1853,6 +1899,7 @@ def rides_incoming_for_driver(
     """
     _require_config()
     driver_id = _verify_user_bearer_token(authorization)
+    trace_id = _request_trace_id(request)
 
     with httpx.Client() as client:
         r = client.get(
@@ -1860,7 +1907,7 @@ def rides_incoming_for_driver(
             params={
                 "pending_driver_id": f"eq.{driver_id}",
                 "status": "eq.requested",
-                "select": "id,status,destination_label,request_expires_at,pickup_lat,pickup_lng,destination_lat,destination_lng",
+                "select": "id,status,destination_label,request_expires_at,pickup_lat,pickup_lng,destination_lat,destination_lng,passenger_id",
                 "order": "request_expires_at.asc",
                 "limit": "20",
             },
@@ -1870,6 +1917,48 @@ def rides_incoming_for_driver(
         if r.status_code != 200:
             raise HTTPException(status_code=502, detail=f"rides incoming query failed: {r.text}")
         rows = _rest_json_list(r, "rides incoming for driver")
+
+        # Fetch driver's current GPS so we can compute distance to each pickup.
+        driver_lat: float | None = None
+        driver_lng: float | None = None
+        try:
+            dp_r = client.get(
+                _rest_url("/driver_presence"),
+                params={"driver_id": f"eq.{driver_id}", "select": "current_lat,current_lng", "limit": "1"},
+                headers=_service_headers(),
+                timeout=10.0,
+            )
+            if dp_r.status_code == 200:
+                dp_rows = _rest_json_list(dp_r, "driver_presence for distance")
+                if dp_rows:
+                    driver_lat = dp_rows[0].get("current_lat")
+                    driver_lng = dp_rows[0].get("current_lng")
+                    driver_lat = float(driver_lat) if driver_lat is not None else None
+                    driver_lng = float(driver_lng) if driver_lng is not None else None
+        except Exception:
+            pass
+
+        # Batch-fetch passenger display names from profiles.
+        passenger_ids = list({str(row["passenger_id"]) for row in rows if isinstance(row, dict) and row.get("passenger_id")})
+        passenger_names: dict[str, str] = {}
+        if passenger_ids:
+            try:
+                ids_csv = ",".join(passenger_ids)
+                prof_r = client.get(
+                    _rest_url("/profiles"),
+                    params={"id": f"in.({ids_csv})", "select": "id,full_name,display_name", "limit": "50"},
+                    headers=_service_headers(),
+                    timeout=10.0,
+                )
+                if prof_r.status_code == 200:
+                    for p in _rest_json_list(prof_r, "passenger profiles"):
+                        pid = str(p.get("id") or "")
+                        name = str(p.get("full_name") or p.get("display_name") or "").strip()
+                        if pid and name:
+                            passenger_names[pid] = name
+            except Exception:
+                pass
+
         out: list[dict] = []
         for row in rows:
             if not isinstance(row, dict):
@@ -1880,28 +1969,70 @@ def rides_incoming_for_driver(
             rid = row.get("id")
             if not rid:
                 continue
+
+            plat = row.get("pickup_lat")
+            plng = row.get("pickup_lng")
+            dlat = row.get("destination_lat")
+            dlng = row.get("destination_lng")
+
+            # Distance from driver to pickup in km.
+            distance_km: float | None = None
+            if driver_lat is not None and driver_lng is not None and plat is not None and plng is not None:
+                try:
+                    distance_km = round(_haversine_meters(driver_lat, driver_lng, float(plat), float(plng)) / 1000, 1)
+                except Exception:
+                    pass
+
+            # Trip distance estimate for kind_points (pickup → destination).
+            trip_km: float | None = None
+            if plat is not None and plng is not None and dlat is not None and dlng is not None:
+                try:
+                    trip_km = _haversine_meters(float(plat), float(plng), float(dlat), float(dlng)) / 1000
+                except Exception:
+                    pass
+
+            # Kind points: 10 base + 1 per km of trip, capped at 30.
+            kind_points = 10
+            if trip_km is not None:
+                kind_points = min(30, 10 + int(trip_km))
+
+            passenger_id = str(row.get("passenger_id") or "")
+            passenger_name = passenger_names.get(passenger_id) or None
+
             out.append(
                 {
                     "ride_id": str(rid),
                     "destination_label": row.get("destination_label"),
                     "request_expires_at": row.get("request_expires_at"),
-                    "pickup_lat": row.get("pickup_lat"),
-                    "pickup_lng": row.get("pickup_lng"),
-                    "destination_lat": row.get("destination_lat"),
-                    "destination_lng": row.get("destination_lng"),
+                    "pickup_lat": plat,
+                    "pickup_lng": plng,
+                    "destination_lat": dlat,
+                    "destination_lng": dlng,
+                    "passenger_id": passenger_id or None,
+                    "passenger_name": passenger_name,
+                    "distance_km": distance_km,
+                    "kind_points": kind_points,
                 }
             )
+        logger.info(
+            "rides_incoming_for_driver trace=%s driver_id=%s count=%s",
+            trace_id,
+            driver_id,
+            len(out),
+        )
         return {"rides": out}
 
 
 @app.get("/rides/status/{ride_id}")
 def rides_status(
     ride_id: str,
+    request: Request,
     authorization: str | None = Header(default=None),
 ):
     """Passenger, pending driver, or assigned driver may poll ride state."""
     _require_config()
     uid = _verify_user_bearer_token(authorization)
+    trace_id = _request_trace_id(request)
     try:
         UUID(ride_id)
     except Exception as err:
@@ -1948,6 +2079,13 @@ def rides_status(
         status = str(row.get("status") or "")
 
         if uid in (pid, did, pend):
+            logger.info(
+                "rides_status trace=%s ride_id=%s uid=%s status=%s access=direct",
+                trace_id,
+                ride_id,
+                uid,
+                status,
+            )
             return _status_payload(row)
 
         # Pending driver who just lost pending in this same request (expiry) should still see searching, not 403.
@@ -1957,6 +2095,13 @@ def rides_status(
             and status == "searching"
             and not pend
         ):
+            logger.info(
+                "rides_status trace=%s ride_id=%s uid=%s status=%s access=expiry_race",
+                trace_id,
+                ride_id,
+                uid,
+                status,
+            )
             return _status_payload(row)
 
         # Same visibility rules as before, but actionable copy for the common pilot failures.
@@ -2700,6 +2845,14 @@ def complete_ride(
     _require_config()
     caller_id = _verify_user_bearer_token(authorization)
     ride_id = payload.rideId
+    trace_id = _request_trace_id(request)
+    logger.info(
+        "rides_complete trace=%s ride_id=%s caller_id=%s journey_id=%s",
+        trace_id,
+        ride_id,
+        caller_id,
+        payload.journeyId,
+    )
 
     now = datetime.now(timezone.utc).isoformat()
     completing_driver_id: str | None = None
@@ -3050,6 +3203,13 @@ def complete_ride(
 
     # Search for next driver should continue independently of rating (non-blocking).
     # Matching engine hookup happens in the next step; for now we return a signal.
+    logger.info(
+        "rides_complete_success trace=%s ride_id=%s driver_id=%s points=%s",
+        trace_id,
+        ride_id,
+        completing_driver_id,
+        total_points_awarded,
+    )
     return {
         "ride_id": ride_id,
         "status": "completed",

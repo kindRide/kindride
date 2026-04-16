@@ -48,6 +48,12 @@ import {
   rememberDestination,
 } from "@/lib/recent-destinations";
 import { getRoadRouteSummary } from "@/lib/road-route";
+import {
+  createRideTraceId,
+  logRideLifecycleEvent,
+  logRideStatusTransition,
+  withRideTraceHeaders,
+} from "@/lib/ride-lifecycle-observability";
 import { supabase } from "@/lib/supabase";
 import BackendStatusBanner from "@/components/BackendStatusBanner";
 import { useBackendHealth } from "@/lib/use-backend-health";
@@ -83,6 +89,7 @@ export default function RideRequestScreen() {
   const [routeNote, setRouteNote] = useState<string>("");
   const [driverRequestStatus, setDriverRequestStatus] = useState<string>("");
   const [driverRequestInFlight, setDriverRequestInFlight] = useState<boolean>(false);
+  const [isRequestActionBusy, setIsRequestActionBusy] = useState<boolean>(false);
   const [driverStartSearchError, setDriverStartSearchError] = useState<string | null>(null);
   const [originPoint, setOriginPoint] = useState<{ latitude: number; longitude: number } | null>(null);
   const [recents, setRecents] = useState<RecentDestination[]>([]);
@@ -97,6 +104,9 @@ export default function RideRequestScreen() {
   const [backgroundAutoPaused, setBackgroundAutoPaused] = useState(false);
   const emptySearchSessionRef = useRef<{ key: string; startedAt: number } | null>(null);
   const widenedNotifiedRef = useRef(false);
+  const requestActionInFlightRef = useRef(false);
+  const lastStatusRef = useRef<string | null>(null);
+  const lastPollErrorAtRef = useRef<number>(0);
   const [appState, setAppState] = useState<AppStateStatus>(AppState.currentState);
   /** One id per visit to this screen: binds `rides/start-search`, `request-driver`, and Active Trip completion. */
   const [sessionRideId, setSessionRideId] = useState(() => createJourneyId());
@@ -580,10 +590,10 @@ export default function RideRequestScreen() {
         try {
           startResp = await fetch(startUrl, {
             method: "POST",
-            headers: {
+            headers: withRideTraceHeaders({
               "Content-Type": "application/json",
               Authorization: `Bearer ${accessToken}`,
-            },
+            }, createRideTraceId("ride-request", sessionRideId, "start-search")),
             body: JSON.stringify({
               rideId: sessionRideId,
               pickupLat: originForServer.latitude,
@@ -618,12 +628,41 @@ export default function RideRequestScreen() {
         const doRequestDriver = (driverId: string) =>
           fetch(reqUrl, {
             method: "POST",
-            headers: {
+            headers: withRideTraceHeaders({
               "Content-Type": "application/json",
               Authorization: `Bearer ${accessToken}`,
-            },
+            }, createRideTraceId("ride-request", sessionRideId, "request-driver")),
             body: JSON.stringify({ rideId: sessionRideId, driverId }),
           });
+        const readRideStatus = async () => {
+          const statusUrl = getRideStatusUrlOrNull(sessionRideId);
+          if (!statusUrl || !accessToken) return null;
+          try {
+            const sr = await fetch(statusUrl, {
+              headers: withRideTraceHeaders(
+                { Authorization: `Bearer ${accessToken}` },
+                createRideTraceId("ride-request", sessionRideId, "status-poll")
+              ),
+            });
+            if (!sr.ok) return null;
+            const body = (await sr.json()) as { status?: string };
+            logRideStatusTransition(
+              "ride-request",
+              sessionRideId,
+              lastStatusRef.current,
+              body.status ?? null
+            );
+            lastStatusRef.current = body.status ?? null;
+            return body.status ?? null;
+          } catch {
+            const now = Date.now();
+            if (now - lastPollErrorAtRef.current > 20_000) {
+              lastPollErrorAtRef.current = now;
+              logRideLifecycleEvent("ride-request", "status_poll_error", { rideId: sessionRideId });
+            }
+            return null;
+          }
+        };
 
         const candidates = [
           firstChoice,
@@ -637,10 +676,10 @@ export default function RideRequestScreen() {
           if (candidate.id !== firstChoice.id && cancelUrl && accessToken) {
             await fetch(cancelUrl, {
               method: "POST",
-              headers: {
+              headers: withRideTraceHeaders({
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${accessToken}`,
-              },
+              }, createRideTraceId("ride-request", sessionRideId, "cancel-pending")),
               body: JSON.stringify({ rideId: sessionRideId }),
             }).catch(() => {});
           }
@@ -660,12 +699,28 @@ export default function RideRequestScreen() {
           }
 
           if (reqResp.status === 409 && cancelUrl) {
+            const conflictStatus = await readRideStatus();
+            if (conflictStatus === "accepted") {
+              setDriverRequestStatus(t("acceptedByDriver", { name: candidate.name }));
+              setDriverRequestInFlight(false);
+              return { success: true, assignedDriver: candidate };
+            }
+            if (
+              conflictStatus === "searching" ||
+              conflictStatus === "declined" ||
+              conflictStatus === "expired" ||
+              conflictStatus === "cancelled"
+            ) {
+              setDriverRequestStatus(t("noResponseThenTryNext", { name: candidate.name }));
+              setDriverRequestInFlight(false);
+              continue;
+            }
             await fetch(cancelUrl, {
               method: "POST",
-              headers: {
+              headers: withRideTraceHeaders({
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${accessToken}`,
-              },
+              }, createRideTraceId("ride-request", sessionRideId, "cancel-pending")),
               body: JSON.stringify({ rideId: sessionRideId }),
             }).catch(() => {});
             try {
@@ -682,7 +737,7 @@ export default function RideRequestScreen() {
               setDriverRequestInFlight(false);
               Alert.alert(
                 t("requestFailed"),
-                errBody.includes("Already waiting")
+                errBody.includes("Transition blocked:")
                   ? `${errBody}\n\n${t("requestFailedRetryTip")}`
                   : errBody
               );
@@ -699,19 +754,30 @@ export default function RideRequestScreen() {
             return { success: false };
           }
 
-          const deadline = Date.now() + 70_000;
+          const deadline = Date.now() + 100_000; // 10s past the 90s backend expiry window
           let acceptanceFound = false;
           while (Date.now() < deadline && !acceptanceFound) {
             await new Promise((res) => setTimeout(res, 2000));
             try {
               const sr = await fetch(statusUrl, {
-                headers: { Authorization: `Bearer ${accessToken}` },
+                headers: withRideTraceHeaders(
+                  { Authorization: `Bearer ${accessToken}` },
+                  createRideTraceId("ride-request", sessionRideId, "status-poll")
+                ),
               });
               if (!sr.ok) {
                 // Network issue on status poll; retry
                 continue;
               }
               const st = (await sr.json()) as { status?: string };
+              logRideStatusTransition(
+                "ride-request",
+                sessionRideId,
+                lastStatusRef.current,
+                st.status ?? null,
+                { candidateDriverId: candidate.id }
+              );
+              lastStatusRef.current = st.status ?? null;
               if (st.status === "accepted") {
                 setDriverRequestStatus(t("acceptedByDriver", { name: candidate.name }));
                 setDriverRequestInFlight(false);
@@ -720,7 +786,8 @@ export default function RideRequestScreen() {
               if (
                 st.status === "searching" ||
                 st.status === "declined" ||
-                st.status === "expired"
+                st.status === "expired" ||
+                st.status === "cancelled"
               ) {
                 setDriverRequestStatus(t("noResponseThenTryNext", { name: candidate.name }));
                 acceptanceFound = false;
@@ -729,6 +796,14 @@ export default function RideRequestScreen() {
             } catch (e) {
               const msg = e instanceof Error ? e.message : "Network request failed";
               setDriverRequestStatus(t("statusPollNetworkError", { message: msg }));
+              const now = Date.now();
+              if (now - lastPollErrorAtRef.current > 20_000) {
+                lastPollErrorAtRef.current = now;
+                logRideLifecycleEvent("ride-request", "status_poll_error", {
+                  rideId: sessionRideId,
+                  candidateDriverId: candidate.id,
+                });
+              }
               // Continue polling; transient network errors are expected
               continue;
             }
@@ -824,6 +899,10 @@ export default function RideRequestScreen() {
 
         <Pressable
           onPress={async () => {
+            if (requestActionInFlightRef.current || isRequestActionBusy || driverRequestInFlight) return;
+            requestActionInFlightRef.current = true;
+            setIsRequestActionBusy(true);
+            try {
             if (!destination) {
               Alert.alert(
                 t("destinationRequired"),
@@ -971,10 +1050,17 @@ export default function RideRequestScreen() {
                 }),
               },
             });
+            } finally {
+              requestActionInFlightRef.current = false;
+              setIsRequestActionBusy(false);
+            }
           }}
-          style={styles.requestButton}
+          disabled={isRequestActionBusy || driverRequestInFlight}
+          style={[styles.requestButton, (isRequestActionBusy || driverRequestInFlight) && styles.requestButtonDisabled]}
         >
-          <Text style={styles.requestButtonText}>{t("requestRide")}</Text>
+          <Text style={styles.requestButtonText}>
+            {isRequestActionBusy || driverRequestInFlight ? t("requestingDriver") : t("requestRide")}
+          </Text>
         </Pressable>
       </View>
     );
@@ -1542,6 +1628,9 @@ const styles = StyleSheet.create({
     minHeight: 42,
     alignItems: "center",
     justifyContent: "center",
+  },
+  requestButtonDisabled: {
+    opacity: 0.65,
   },
   requestButtonText: {
     color: "#ffffff",
