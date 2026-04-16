@@ -353,6 +353,16 @@ export default function SettingsScreen() {
                 </View>
               </View>
               <View style={styles.rowDivider} />
+              <SettingRow
+                icon="🧾"
+                iconBg="#f0fdf4"
+                label="My Ride History"
+                sub="All your past trips"
+                onPress={() => router.push("/ride-history")}
+                simplified={S}
+                last
+              />
+              <View style={styles.rowDivider} />
               <View style={styles.idBlock}>
                 <Text style={styles.idLabel}>{t("userIdLabel")}</Text>
                 <Text style={styles.idHint}>{t("shareUserIdWithSupport")}</Text>
