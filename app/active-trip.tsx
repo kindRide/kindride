@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as Location from "expo-location";
 import {
+  ActivityIndicator,
   Alert,
   Platform,
   Pressable,
@@ -20,6 +21,7 @@ import {
   getJourneysRegisterUrlOrNull,
   getMatchingSearchUrlOrNull,
   getPassengerReputationUrlOrNull,
+  getRidesCancelPendingUrlOrNull,
   getRidesCompleteUrlOrNull,
   getRideStatusUrlOrNull,
   getRidesShareTokenUrlOrNull,
@@ -110,6 +112,7 @@ export default function ActiveTripScreen() {
   const lastPolledStatusRef = useRef<string | null>(null);
   const lastPollErrorAtRef = useRef<number>(0);
   const completeInFlightRef = useRef(false);
+  const cancelInFlightRef = useRef(false);
   const shareInFlightRef = useRef(false);
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -185,6 +188,7 @@ export default function ActiveTripScreen() {
   }, [params.rideId]);
 
   const [isCompletingRide, setIsCompletingRide] = useState(false);
+  const [isCancellingRide, setIsCancellingRide] = useState(false);
   const [tripStartedAtIso, setTripStartedAtIso] = useState<string | null>(null);
   /** Miles for this leg only (pickup → dropoff segment). Entered before End Trip. */
   const [legMilesText, setLegMilesText] = useState("");
@@ -530,6 +534,12 @@ export default function ActiveTripScreen() {
 
   const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY?.trim() ?? "";
   const useGoogleProvider = googleMapsApiKey.length > 0;
+  const rideCancelEndpoint = useMemo(() => {
+    const cancelBase = getRidesCancelPendingUrlOrNull();
+    if (!cancelBase) return null;
+    const trimmedBase = cancelBase.replace(/\/rides\/cancel-pending\/?$/, "");
+    return `${trimmedBase}/rides/${encodeURIComponent(rideId)}/cancel`;
+  }, [rideId]);
 
   const mapRegion = useMemo(() => {
     const a = liveDriverLocation || pickupPoint;
@@ -610,6 +620,55 @@ export default function ActiveTripScreen() {
 
   const tripStatus =
     secondsLeft > 0 ? t("boardingNow", { time: boardingTimeText }) : t("tripInProgress");
+
+  const confirmCancelRide = () => {
+    if (isCancellingRide || cancelInFlightRef.current) return;
+    Alert.alert(
+      "Cancel ride?",
+      "Your driver has already been assigned. Are you sure?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Yes, cancel",
+          style: "destructive",
+          onPress: async () => {
+            if (cancelInFlightRef.current) return;
+            cancelInFlightRef.current = true;
+            setIsCancellingRide(true);
+            try {
+              if (!supabase || !rideCancelEndpoint) {
+                throw new Error("cancel-unavailable");
+              }
+              const sessionResult = await supabase.auth.getSession();
+              const accessToken = sessionResult.data.session?.access_token;
+              if (!accessToken) {
+                throw new Error("missing-token");
+              }
+
+              const response = await fetch(rideCancelEndpoint, {
+                method: "DELETE",
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                },
+              });
+
+              if (response.status !== 200 && response.status !== 204) {
+                throw new Error("cancel-failed");
+              }
+
+              router.replace("/(tabs)");
+              Alert.alert("Ride cancelled. Your driver has been notified.");
+            } catch {
+              Alert.alert("Could not cancel", "Please try again.");
+            } finally {
+              cancelInFlightRef.current = false;
+              setIsCancellingRide(false);
+            }
+          },
+        },
+      ]
+    );
+  };
 
 
   return (
@@ -705,6 +764,19 @@ export default function ActiveTripScreen() {
           <Text style={styles.repHint}>{t("passengerProfileNoRatings")}</Text>
         ) : null}
         <Text style={styles.statusText}>{tripStatus}</Text>
+        {rideStatus === "accepted" ? (
+          <Pressable
+            onPress={confirmCancelRide}
+            disabled={isCancellingRide}
+            style={[styles.cancelRideButton, isCancellingRide && styles.cancelRideButtonDisabled]}
+          >
+            {isCancellingRide ? (
+              <ActivityIndicator color="#ef4444" />
+            ) : (
+              <Text style={styles.cancelRideButtonText}>Cancel ride</Text>
+            )}
+          </Pressable>
+        ) : null}
         <Text style={styles.legDistanceLabel}>
           {autoJourneyId ? t("thisLegMiles") : t("tripMiles")}
         </Text>
@@ -1115,6 +1187,25 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#334155",
     fontWeight: "500",
+  },
+  cancelRideButton: {
+    marginTop: 14,
+    borderWidth: 1.5,
+    borderColor: "#ef4444",
+    borderRadius: 12,
+    paddingVertical: 14,
+    minHeight: 50,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
+  cancelRideButtonDisabled: {
+    opacity: 0.7,
+  },
+  cancelRideButtonText: {
+    color: "#ef4444",
+    fontSize: 15,
+    fontWeight: "700",
   },
   endTripButton: {
     marginTop: 14,
