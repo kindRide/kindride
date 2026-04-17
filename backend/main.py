@@ -1774,6 +1774,17 @@ class CancelPendingRideRequest(BaseModel):
         return v
 
 
+class RideRequest(BaseModel):
+    pickup: str = Field(min_length=3, max_length=200)
+    dropoff: str = Field(min_length=3, max_length=200)
+    scheduled_for: datetime | None = None
+
+    @field_validator("pickup", "dropoff")
+    @classmethod
+    def normalize_address(cls, v: str) -> str:
+        return v.strip()
+
+
 @app.post("/rides/cancel-pending")
 @(_limiter.limit("20/minute") if _SLOWAPI_AVAILABLE else lambda f: f)
 def rides_cancel_pending(
@@ -1823,6 +1834,48 @@ def rides_cancel_pending(
             raise HTTPException(status_code=502, detail=f"cancel-pending failed: {r.text}")
 
     return {"ride_id": payload.rideId, "status": "searching"}
+
+
+@app.post("/rides/request")
+@(_limiter.limit("20/minute") if _SLOWAPI_AVAILABLE else lambda f: f)
+def rides_request(
+    request: Request,
+    payload: RideRequest,
+    authorization: str | None = Header(default=None),
+):
+    _require_config()
+    passenger_id = _verify_user_bearer_token(authorization)
+
+    body: dict[str, object] = {
+        "passenger_id": passenger_id,
+        "status": "scheduled" if payload.scheduled_for else "searching",
+        "pickup_address": payload.pickup,
+        "dropoff_address": payload.dropoff,
+        "destination_label": payload.dropoff,
+    }
+    if payload.scheduled_for is not None:
+        scheduled_for = payload.scheduled_for
+        if scheduled_for.tzinfo is None:
+            scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
+        body["scheduled_for"] = scheduled_for.astimezone(timezone.utc).isoformat()
+
+    with httpx.Client() as client:
+        r = client.post(
+            _rest_url("/rides"),
+            headers={**_service_headers(), "Prefer": "return=representation"},
+            json=body,
+            timeout=30.0,
+        )
+        if r.status_code not in (200, 201):
+            raise HTTPException(status_code=502, detail=f"rides request failed: {r.text}")
+        rows = _rest_json_list(r, "rides request insert")
+        created = rows[0] if rows else {}
+
+    return {
+        "ride_id": created.get("id"),
+        "status": created.get("status", body["status"]),
+        "scheduled_for": created.get("scheduled_for"),
+    }
 
 
 @app.post("/rides/respond")

@@ -761,6 +761,19 @@ export default function ActiveTripScreen() {
           <Text style={styles.repHint}>{t("passengerProfileNoRatings")}</Text>
         ) : null}
         <Text style={styles.statusText}>{tripStatus}</Text>
+        {(rideStatus === "accepted" || rideStatus === "in_progress") ? (
+          <Pressable
+            onPress={() =>
+              router.push({
+                pathname: "/trip-chat",
+                params: { rideId },
+              })
+            }
+            style={styles.chatButton}
+          >
+            <Text style={styles.chatButtonText}>Chat</Text>
+          </Pressable>
+        ) : null}
         {rideStatus === "accepted" ? (
           <Pressable
             onPress={confirmCancelRide}
@@ -1184,6 +1197,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#334155",
     fontWeight: "500",
+  },
+  chatButton: {
+    marginTop: 14,
+    borderRadius: 12,
+    paddingVertical: 14,
+    minHeight: 50,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0d9488",
+  },
+  chatButtonText: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "700",
   },
   cancelRideButton: {
     marginTop: 14,

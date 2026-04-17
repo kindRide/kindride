@@ -1,8 +1,14 @@
 -- Community Hub Phase 1 schema
 -- Run this in the Supabase SQL editor.
 
+-- ── Drop existing tables (safe — no production data yet) ──────────────────────
+DROP TABLE IF EXISTS hub_subscriptions CASCADE;
+DROP TABLE IF EXISTS hub_members CASCADE;
+DROP TABLE IF EXISTS hubs CASCADE;
+DROP VIEW IF EXISTS my_hubs CASCADE;
+
 -- ── hubs ─────────────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS hubs (
+CREATE TABLE hubs (
   id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name              text NOT NULL,
   type              text NOT NULL CHECK (type IN ('university','church','nonprofit','corporate')),
@@ -16,7 +22,7 @@ CREATE TABLE IF NOT EXISTS hubs (
 );
 
 -- ── hub_members ───────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS hub_members (
+CREATE TABLE hub_members (
   hub_id      uuid NOT NULL REFERENCES hubs(id) ON DELETE CASCADE,
   user_id     uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   role        text NOT NULL DEFAULT 'member' CHECK (role IN ('member','hub_admin')),
@@ -26,7 +32,7 @@ CREATE TABLE IF NOT EXISTS hub_members (
 );
 
 -- ── hub_subscriptions ────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS hub_subscriptions (
+CREATE TABLE hub_subscriptions (
   hub_id                  uuid PRIMARY KEY REFERENCES hubs(id) ON DELETE CASCADE,
   stripe_customer_id      text,
   stripe_subscription_id  text,
@@ -37,9 +43,9 @@ CREATE TABLE IF NOT EXISTS hub_subscriptions (
 );
 
 -- ── Indexes ───────────────────────────────────────────────────────────────────
-CREATE INDEX IF NOT EXISTS hub_members_user_id_idx ON hub_members(user_id);
-CREATE INDEX IF NOT EXISTS hub_members_hub_id_idx  ON hub_members(hub_id);
-CREATE INDEX IF NOT EXISTS hubs_slug_idx           ON hubs(slug);
+CREATE INDEX hub_members_user_id_idx ON hub_members(user_id);
+CREATE INDEX hub_members_hub_id_idx  ON hub_members(hub_id);
+CREATE INDEX hubs_slug_idx           ON hubs(slug);
 
 -- ── Row Level Security ────────────────────────────────────────────────────────
 ALTER TABLE hubs              ENABLE ROW LEVEL SECURITY;

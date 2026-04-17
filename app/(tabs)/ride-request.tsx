@@ -1269,6 +1269,10 @@ export default function RideRequestScreen() {
         />
       )}
 
+      <Pressable onPress={() => router.push("/schedule-ride")}>
+        <Text style={styles.scheduleLink}>{"Schedule for later ->"}</Text>
+      </Pressable>
+
       <Pressable
         onPress={async () => {
           const cancelUrl = getRidesCancelPendingUrlOrNull();
@@ -1675,5 +1679,12 @@ const styles = StyleSheet.create({
     color: "#2563eb",
     fontSize: 16,
     fontWeight: "600",
+  },
+  scheduleLink: {
+    marginTop: 12,
+    textAlign: "center",
+    color: "#0d9488",
+    fontSize: 15,
+    fontWeight: "700",
   },
 });

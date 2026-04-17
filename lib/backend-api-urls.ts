@@ -99,6 +99,11 @@ export function getRidesRequestDriverUrlOrNull(): string | null {
   return b ? `${b}/rides/request-driver` : null;
 }
 
+export function getRidesRequestUrlOrNull(): string | null {
+  const b = getBackendBaseUrlOrNull();
+  return b ? `${b}/rides/request` : null;
+}
+
 export function getRidesCancelPendingUrlOrNull(): string | null {
   const b = getBackendBaseUrlOrNull();
   return b ? `${b}/rides/cancel-pending` : null;
