@@ -229,14 +229,13 @@ const powerStyles = StyleSheet.create({
 });
 
 // ── Earnings card ─────────────────────────────────────────────────────────────
-function EarningsStrip({ rides, t }: { rides: number; t: any }) {
-  const today = rides * 15;
-  const week = today + 48 * 15; // mock weekly
-  const month = week + 180 * 15;
+function EarningsStrip({ todayPts, weekPts, monthPts, todayRides, t }: {
+  todayPts: number; weekPts: number; monthPts: number; todayRides: number; t: any;
+}) {
   const cells = [
-    { label: t("today", "Today"), value: today, unit: t("pts", "pts") },
-    { label: t("thisWeek", "This week"), value: week, unit: t("pts", "pts") },
-    { label: t("thisMonth", "This month"), value: month, unit: t("pts", "pts") },
+    { label: t("today", "Today"), value: todayPts, unit: t("pts", "pts"), sub: `${todayRides} ride${todayRides !== 1 ? "s" : ""}` },
+    { label: t("thisWeek", "This week"), value: weekPts, unit: t("pts", "pts"), sub: null },
+    { label: t("thisMonth", "This month"), value: monthPts, unit: t("pts", "pts"), sub: null },
   ];
   return (
     <Reanimated.View entering={FadeInDown.delay(100).springify()} style={earningStyles.strip}>
@@ -246,6 +245,7 @@ function EarningsStrip({ rides, t }: { rides: number; t: any }) {
             <Text style={earningStyles.cellValue}>{c.value.toLocaleString()}</Text>
             <Text style={earningStyles.cellUnit}>{c.unit}</Text>
             <Text style={earningStyles.cellLabel}>{c.label}</Text>
+            {c.sub ? <Text style={earningStyles.cellSub}>{c.sub}</Text> : null}
           </View>
         ))}
       </ScrollView>
@@ -268,6 +268,7 @@ const earningStyles = StyleSheet.create({
   cellValue: { fontSize: 24, fontWeight: "800", color: "#0f172a", letterSpacing: -0.5 },
   cellUnit: { fontSize: 11, fontWeight: "700", color: "#0d9488", letterSpacing: 0.5, textTransform: "uppercase" },
   cellLabel: { fontSize: 12, color: "#94a3b8", fontWeight: "500" },
+  cellSub: { fontSize: 11, color: "#64748b", fontWeight: "500", marginTop: 1 },
 });
 
 // ── Main screen ───────────────────────────────────────────────────────────────
@@ -298,6 +299,7 @@ export default function DriverDashboardScreen() {
   const [actingRideId, setActingRideId] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [ridesGiven, setRidesGiven] = useState(0);
+  const [driverStats, setDriverStats] = useState({ todayPts: 0, weekPts: 0, monthPts: 0, todayRides: 0, lifetimeRides: 0, lifetimePts: 0 });
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [communityCount, setCommunityCount] = useState(4380);
 
@@ -683,6 +685,36 @@ export default function DriverDashboardScreen() {
         .then((data) => { if (data) setConnectChargesEnabled(Boolean(data.charges_enabled)); })
         .catch(() => {});
     }
+    // Real driver stats from Supabase
+    if (supabase && session.user.id) {
+      const driverId = session.user.id;
+      (async () => {
+        try {
+          const now = new Date();
+          const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+          const startOfWeek  = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+          const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+          const { data: rides } = await supabase
+            .from("rides")
+            .select("created_at, kind_points")
+            .eq("driver_id", driverId)
+            .eq("status", "completed");
+          if (!rides) return;
+          const todayRides = rides.filter(r => r.created_at >= startOfToday);
+          const weekRides  = rides.filter(r => r.created_at >= startOfWeek);
+          const monthRides = rides.filter(r => r.created_at >= startOfMonth);
+          const sum = (arr: typeof rides) => arr.reduce((acc, r) => acc + (r.kind_points ?? 0), 0);
+          setDriverStats({
+            todayPts:      sum(todayRides),
+            weekPts:       sum(weekRides),
+            monthPts:      sum(monthRides),
+            todayRides:    todayRides.length,
+            lifetimeRides: rides.length,
+            lifetimePts:   sum(rides),
+          });
+        } catch { /* non-critical */ }
+      })();
+    }
   }, [session]);
 
   useFocusEffect(
@@ -794,7 +826,19 @@ export default function DriverDashboardScreen() {
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>{t("earnings", "Earnings")}</Text>
           </View>
-          <EarningsStrip rides={ridesGiven} t={t} />
+          <EarningsStrip
+            todayPts={driverStats.todayPts}
+            weekPts={driverStats.weekPts}
+            monthPts={driverStats.monthPts}
+            todayRides={driverStats.todayRides + ridesGiven}
+            t={t}
+          />
+          <Pressable
+            style={styles.impactLink}
+            onPress={() => router.push("/driver-impact")}
+          >
+            <Text style={styles.impactLinkText}>View full impact & streak →</Text>
+          </Pressable>
 
           {/* ── Incoming Requests ─────────────────────────────────────────────── */}
           <View style={styles.sectionHeader}>
@@ -1448,4 +1492,8 @@ const styles = StyleSheet.create({
   // ── Trip history subtle link
   historyLink: { alignItems: "center", paddingVertical: 20 },
   historyLinkText: { fontSize: 14, color: "#94a3b8", fontWeight: "500" },
+
+  // ── Impact screen link
+  impactLink: { alignSelf: "center", paddingVertical: 10, paddingHorizontal: 16 },
+  impactLinkText: { fontSize: 13, color: "#0d9488", fontWeight: "700" },
 });
