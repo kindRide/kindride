@@ -1,3 +1,4 @@
+import CommunityNetworkSection from "@/components/CommunityNetworkSection";
 import DifferenceSection from "@/components/DifferenceSection";
 import HubApplicationForm from "@/components/HubApplicationForm";
 import HubShowcase from "@/components/HubShowcase";
@@ -71,6 +72,10 @@ export default function Home() {
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="bg-[#0c1f3f] px-8 py-24">
+        <CommunityNetworkSection />
       </section>
 
       <section id="difference" className="bg-[#0c1f3f] px-8 py-24">
