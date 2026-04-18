@@ -207,6 +207,7 @@ export default function HomeScreen() {
   const [activeStory, setActiveStory] = useState(0);
   const [communityCount, setCommunityCount] = useState(4180);
   const [recentEvents, setRecentEvents] = useState<{ label: string; pts: number }[]>([]);
+  const [myHub, setMyHub] = useState<{ name: string; type: string; slug: string } | null | undefined>(undefined);
 
   const storyScrollRef = useRef<ScrollView>(null);
   const storyTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -251,6 +252,23 @@ export default function HomeScreen() {
             pts: e.points_change,
           })));
         }
+
+        // Hub membership
+        const { data: membership } = await supabase
+          .from("hub_members")
+          .select("hub_id, hubs(name, type, slug)")
+          .eq("user_id", uid)
+          .eq("is_active", true)
+          .limit(1)
+          .maybeSingle();
+        if (membership?.hubs) {
+          const h = membership.hubs as { name: string; type: string; slug: string };
+          setMyHub(h);
+        } else {
+          setMyHub(null);
+        }
+      } else {
+        setMyHub(null);
       }
     }
   }, []);
@@ -486,6 +504,43 @@ export default function HomeScreen() {
             <Text style={styles.secondarySub}>{t("myImpact", "My impact")}</Text>
           </Pressable>
         </Animated.View>
+
+        {/* ── MY HUB ────────────────────────────────────────────────────── */}
+        {myHub !== undefined && (
+          <Animated.View entering={FadeInDown.delay(260).springify()} style={styles.hubWrap}>
+            {myHub ? (
+              <Pressable
+                style={styles.hubCard}
+                onPress={() => router.push(`/join/${myHub.slug}`)}
+                accessibilityRole="button"
+              >
+                <View style={styles.hubLeft}>
+                  <Text style={styles.hubIcon}>
+                    {{ university: "🎓", church: "⛪", nonprofit: "🤝", corporate: "🏢" }[myHub.type] ?? "🏘️"}
+                  </Text>
+                  <View>
+                    <Text style={styles.hubLabel}>My Hub</Text>
+                    <Text style={styles.hubName}>{myHub.name}</Text>
+                  </View>
+                </View>
+                <View style={styles.hubBadge}>
+                  <Text style={styles.hubBadgeText}>MEMBER ✓</Text>
+                </View>
+              </Pressable>
+            ) : user ? (
+              <Pressable
+                style={styles.hubJoinCard}
+                onPress={() => router.push("/(tabs)/ride-request")}
+              >
+                <Text style={styles.hubJoinIcon}>🏘️</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.hubJoinTitle}>Not in a hub yet</Text>
+                  <Text style={styles.hubJoinSub}>Ask your university, church, or employer if they have a KindRide hub.</Text>
+                </View>
+              </Pressable>
+            ) : null}
+          </Animated.View>
+        )}
 
         {/* ── IMPACT STORIES — auto-rotating ────────────────────────────── */}
         <Animated.View entering={FadeInDown.delay(280).springify()}>
@@ -773,6 +828,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 3,
   },
   recentPointsText: { fontSize: 12, fontWeight: "700", color: "#15803d" },
+
+  // ── My Hub
+  hubWrap: { paddingHorizontal: 16, paddingTop: 12 },
+  hubCard: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    backgroundColor: "#f0fdfa", borderRadius: 16,
+    borderWidth: 1, borderColor: "#99f6e4",
+    paddingHorizontal: 16, paddingVertical: 14,
+  },
+  hubLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
+  hubIcon: { fontSize: 28 },
+  hubLabel: { fontSize: 11, fontWeight: "700", color: "#0f766e", textTransform: "uppercase", letterSpacing: 0.5 },
+  hubName: { fontSize: 15, fontWeight: "700", color: "#0f172a", marginTop: 2 },
+  hubBadge: {
+    backgroundColor: "#0d9488", borderRadius: 8,
+    paddingHorizontal: 9, paddingVertical: 4,
+  },
+  hubBadgeText: { fontSize: 10, fontWeight: "800", color: "#ffffff", letterSpacing: 0.3 },
+  hubJoinCard: {
+    flexDirection: "row", alignItems: "center", gap: 14,
+    backgroundColor: "#f8fafc", borderRadius: 16,
+    borderWidth: 1, borderColor: "#e2e8f0",
+    paddingHorizontal: 16, paddingVertical: 14,
+  },
+  hubJoinIcon: { fontSize: 26 },
+  hubJoinTitle: { fontSize: 14, fontWeight: "700", color: "#0f172a", marginBottom: 2 },
+  hubJoinSub: { fontSize: 12, color: "#64748b", lineHeight: 17 },
 
   // ── Mission strip
   missionWrap: { paddingHorizontal: 16, paddingTop: 20 },
