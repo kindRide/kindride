@@ -1,5 +1,6 @@
 import CommunityNetworkSection from "@/components/CommunityNetworkSection";
 import DifferenceSection from "@/components/DifferenceSection";
+import DriverStories from "@/components/DriverStories";
 import HubApplicationForm from "@/components/HubApplicationForm";
 import HubShowcase from "@/components/HubShowcase";
 import LiveCounter from "@/components/LiveCounter";
@@ -80,6 +81,10 @@ export default function Home() {
 
       <section id="difference" className="bg-[#0c1f3f] px-8 py-24">
         <DifferenceSection />
+      </section>
+
+      <section className="bg-[#060f1e] px-8 py-24">
+        <DriverStories />
       </section>
 
       <section id="hubs" className="bg-[#f8fafc] px-8 py-24">
