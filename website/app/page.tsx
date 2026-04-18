@@ -4,6 +4,7 @@ import DriverStories from "@/components/DriverStories";
 import HubApplicationForm from "@/components/HubApplicationForm";
 import HubShowcase from "@/components/HubShowcase";
 import LiveCounter from "@/components/LiveCounter";
+import LiveImpactWall from "@/components/LiveImpactWall";
 
 export default function Home() {
   return (
@@ -73,6 +74,10 @@ export default function Home() {
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="bg-[#060f1e] px-8 py-24">
+        <LiveImpactWall />
       </section>
 
       <section className="bg-[#0c1f3f] px-8 py-24">
