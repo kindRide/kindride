@@ -1,7 +1,7 @@
-import { Link, type Href, useLocalSearchParams, useRouter } from "expo-router";
+import * as Location from "expo-location";
+import { Link, useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import * as Location from "expo-location";
 import {
   ActivityIndicator,
   Alert,
@@ -23,8 +23,8 @@ import {
   getPassengerReputationUrlOrNull,
   getRidesCancelPendingUrlOrNull,
   getRidesCompleteUrlOrNull,
-  getRideStatusUrlOrNull,
   getRidesShareTokenUrlOrNull,
+  getRideStatusUrlOrNull,
 } from "@/lib/backend-api-urls";
 import { formatBackendErrorBody } from "@/lib/backend-error";
 import { clampLegMilesStraightLine, haversineMiles, type LatLng } from "@/lib/haversine-miles";
@@ -34,13 +34,13 @@ import {
   type DriverCard,
   type TravelDirection,
 } from "@/lib/matching-drivers";
-import { attestRouteCommitment } from "@/lib/route-commitment";
 import {
   createRideTraceId,
   logRideLifecycleEvent,
   logRideStatusTransition,
   withRideTraceHeaders,
 } from "@/lib/ride-lifecycle-observability";
+import { attestRouteCommitment } from "@/lib/route-commitment";
 import { supabase } from "@/lib/supabase";
 
 export default function ActiveTripScreen() {
@@ -618,53 +618,14 @@ export default function ActiveTripScreen() {
 
   const confirmCancelRide = () => {
     if (isCancellingRide || cancelInFlightRef.current) return;
-    Alert.alert(
-      "Cancel ride?",
-      "Your driver has already been assigned. Are you sure?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Yes, cancel",
-          style: "destructive",
-          onPress: async () => {
-            if (cancelInFlightRef.current) return;
-            cancelInFlightRef.current = true;
-            setIsCancellingRide(true);
-            try {
-              if (!supabase || !rideCancelEndpoint) {
-                throw new Error("cancel-unavailable");
-              }
-              const sessionResult = await supabase.auth.getSession();
-              const accessToken = sessionResult.data.session?.access_token;
-              if (!accessToken) {
-                throw new Error("missing-token");
-              }
-
-              const response = await fetch(rideCancelEndpoint, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: `Bearer ${accessToken}`,
-                },
-                body: JSON.stringify({ rideId }),
-              });
-
-              if (response.status !== 200 && response.status !== 204) {
-                throw new Error("cancel-failed");
-              }
-
-              router.replace("/(tabs)");
-              Alert.alert("Ride cancelled. Your driver has been notified.");
-            } catch {
-              Alert.alert("Could not cancel", "Please try again.");
-            } finally {
-              cancelInFlightRef.current = false;
-              setIsCancellingRide(false);
-            }
-          },
-        },
-      ]
-    );
+    router.push({
+      pathname: "/cancel-ride",
+      params: {
+        rideId,
+        driverName,
+        context: rideStatus === "accepted" ? "accepted" : "searching",
+      },
+    });
   };
 
 
