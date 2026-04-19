@@ -745,6 +745,18 @@
   "faqA5": "Safety is built into every trip. Sessions are recorded in-app and stored securely for 72 hours, then auto-deleted (unless flagged for review). An SOS emergency button is available to both passengers and drivers at any time during a trip. All accounts require email verification, and you can share your live trip link with a trusted contact.",
   "faqQ6": "How do voluntary tips work?",
   "faqA6": "After each ride, passengers can optionally leave a tip of $1, $2, $5, or any custom amount. Payments are processed securely via Stripe, and 100% of every tip goes directly to the driver's bank account — KindRide keeps nothing. You never have to tip; kindness is always enough.",
-  "faqQ7": "Why would a driver give me a free ride?",
-  "faqA7": "KindRide's matching only connects you with drivers who are already heading in your direction. Our zero-detour approach means drivers don't have to go out of their way — they simply offer an empty seat to someone who needs it. Drivers earn Kind Points, community recognition, and the satisfaction of making a real difference."
+  "faqQ7": "Why would anyone drive a stranger for free?",
+  "faqA7": "The same reason people volunteer at food banks, coach youth football, or hold a door open for someone they've never met. Humans are wired for honour — the pride of being someone who helped. KindRide drivers can tell their family, their church, their colleagues: 'I got someone to work this morning. For free.' That story has social value money can't replicate. On top of that, our matching only connects you with drivers already heading your way — giving the ride costs them almost nothing. Kind Points, community recognition, and a genuine sense of purpose are more than enough reward.",
+
+  "faqQ8": "Is KindRide legal? Do drivers need a special license?",
+  "faqA8": "KindRide operates as a community rideshare platform — not a commercial taxi or TNC service. Drivers receive no fare, no payment, and no compensation other than optional voluntary tips left by passengers. Most jurisdictions allow this model between community members. Drivers use their personal vehicle and personal insurance as they would for any voluntary trip. We recommend checking your local regulations, and we continuously work with legal advisors to ensure KindRide complies with the rules in every community it serves.",
+
+  "faqQ9": "What if no driver is available when I need one?",
+  "faqA9": "KindRide is a community platform, not a fleet — availability depends on real neighbors being online near you. If no driver is found immediately, the app keeps searching quietly in the background and alerts you when a match appears. You can also allow multi-leg handoffs, which significantly increases your chances by connecting you with a driver who covers part of your journey. Availability grows as more drivers join your community, which is why inviting neighbors matters.",
+
+  "faqQ10": "What happens if a driver or passenger behaves badly?",
+  "faqA10": "Every account requires email verification. Sessions are recorded in-app during every trip and stored securely for 72 hours — giving both sides protection if anything is disputed. Passengers and drivers can rate each other after every ride; repeated bad behavior removes someone from the platform. A one-tap SOS button is always visible during a trip and connects to emergency services immediately. Community trust is the foundation of KindRide — we take violations seriously.",
+
+  "faqQ11": "How is KindRide different from Uber, Lyft, or carpool apps?",
+  "faqA11": "Uber and Lyft are businesses — drivers work for income, the platform takes a cut, prices surge during demand. KindRide is a community. Drivers are your neighbors, already going your way. There are no fares, no surge pricing, no commission, and no profit extracted from your trip. Every ride is a human act — one neighbor helping another. Carpool apps connect commuters on fixed routes. KindRide matches you dynamically, anywhere, anytime — powered by trust and Kind Points instead of money."
 }

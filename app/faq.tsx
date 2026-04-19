@@ -3,7 +3,7 @@ import { useRouter } from "expo-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import Reanimated, { FadeIn, FadeInDown, Layout } from "react-native-reanimated";
+import Reanimated, { FadeIn, FadeInDown, LinearTransition } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const FAQ_ITEMS = [
@@ -14,6 +14,10 @@ const FAQ_ITEMS = [
   { q: "faqQ5", a: "faqA5" },
   { q: "faqQ6", a: "faqA6" },
   { q: "faqQ7", a: "faqA7" },
+  { q: "faqQ8", a: "faqA8" },
+  { q: "faqQ9", a: "faqA9" },
+  { q: "faqQ10", a: "faqA10" },
+  { q: "faqQ11", a: "faqA11" },
 ];
 
 function FAQItem({ qKey, aKey, index }: { qKey: string; aKey: string; index: number }) {
@@ -23,7 +27,7 @@ function FAQItem({ qKey, aKey, index }: { qKey: string; aKey: string; index: num
   return (
     <Reanimated.View 
       entering={FadeInDown.delay(index * 50).springify()} 
-      layout={Layout.springify()}
+      layout={LinearTransition.springify()}
     >
       <Pressable style={styles.card} onPress={() => setExpanded(!expanded)}>
         <View style={styles.questionRow}>
