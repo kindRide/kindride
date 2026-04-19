@@ -1,3 +1,4 @@
+import AskAQuestion from "@/components/AskAQuestion";
 import CommunityNetworkSection from "@/components/CommunityNetworkSection";
 import DifferenceSection from "@/components/DifferenceSection";
 import DownloadSection from "@/components/DownloadSection";
@@ -99,6 +100,10 @@ export default function Home() {
 
       <section id="apply" className="bg-[#0c1f3f] px-8 py-24">
         <HubApplicationForm />
+      </section>
+
+      <section className="bg-[#060f1e] px-8 py-24">
+        <AskAQuestion />
       </section>
 
       <section id="download" className="bg-[#0c1f3f] px-8 py-24">

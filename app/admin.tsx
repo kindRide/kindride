@@ -60,7 +60,14 @@ type HubRow = {
   member_count?: number;
 };
 
-type Tab = 'sos' | 'drivers' | 'rides' | 'hubs';
+type Tab = 'sos' | 'drivers' | 'rides' | 'hubs' | 'questions';
+
+type QuestionRow = {
+  id: string;
+  question: string;
+  email: string | null;
+  created_at: string;
+};
 
 // ─── Tab bar ─────────────────────────────────────────────────────────────────
 
@@ -69,7 +76,8 @@ function TabBar({ active, onSelect }: { active: Tab; onSelect: (t: Tab) => void 
     { key: 'sos',     label: 'SOS',     icon: '🆘' },
     { key: 'drivers', label: 'Drivers', icon: '🚗' },
     { key: 'rides',   label: 'Rides',   icon: '📋' },
-    { key: 'hubs',    label: 'Hubs',    icon: '🏘️' },
+    { key: 'hubs',      label: 'Hubs',      icon: '🏘️' },
+    { key: 'questions', label: 'Questions', icon: '💬' },
   ];
   return (
     <View style={styles.tabBar}>
@@ -115,6 +123,10 @@ export default function AdminScreen() {
   const [hubs, setHubs] = useState<HubRow[]>([]);
   const [hubsRefreshing, setHubsRefreshing] = useState(false);
   const [founderId, setFounderId] = useState<string | null>(null);
+
+  // Questions state
+  const [questions, setQuestions] = useState<QuestionRow[]>([]);
+  const [questionsRefreshing, setQuestionsRefreshing] = useState(false);
 
   // ── Data fetchers ──────────────────────────────────────────────────────────
 
@@ -219,6 +231,21 @@ export default function AdminScreen() {
     }
   }, []);
 
+  const fetchQuestions = useCallback(async () => {
+    if (!supabase) return;
+    try {
+      const { data, error } = await supabase
+        .from('website_questions')
+        .select('id, question, email, created_at')
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      setQuestions((data as QuestionRow[]) || []);
+    } catch {
+      Alert.alert('Error', 'Failed to load questions.');
+    }
+  }, []);
+
   // ── Auth + initial load ────────────────────────────────────────────────────
 
   const checkAdminAccess = useCallback(async () => {
@@ -236,14 +263,14 @@ export default function AdminScreen() {
       } else {
         setIsAdmin(true);
         setFounderId(session.user.id);
-        await Promise.all([fetchSosRequests(), fetchDrivers(), fetchRides(), fetchHubs()]);
+        await Promise.all([fetchSosRequests(), fetchDrivers(), fetchRides(), fetchHubs(), fetchQuestions()]);
       }
     } catch {
       setIsAdmin(false);
     } finally {
       setLoading(false);
     }
-  }, [fetchSosRequests, fetchDrivers, fetchRides, fetchHubs]);
+  }, [fetchSosRequests, fetchDrivers, fetchRides, fetchHubs, fetchQuestions]);
 
   useEffect(() => { checkAdminAccess(); }, [checkAdminAccess]);
 
@@ -670,6 +697,44 @@ export default function AdminScreen() {
         />
       )}
 
+      {/* Questions tab */}
+      {activeTab === 'questions' && (
+        <FlatList
+          data={questions}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl
+              refreshing={questionsRefreshing}
+              onRefresh={async () => { setQuestionsRefreshing(true); await fetchQuestions(); setQuestionsRefreshing(false); }}
+            />
+          }
+          ListHeaderComponent={
+            <Text style={styles.tabHint}>
+              {questions.length} question{questions.length !== 1 ? 's' : ''} from kindride.app
+            </Text>
+          }
+          ListEmptyComponent={<Text style={styles.emptyText}>No questions yet.</Text>}
+          renderItem={({ item }) => (
+            <View style={styles.card}>
+              <Text style={styles.questionText}>{item.question}</Text>
+              <View style={styles.questionMeta}>
+                {item.email ? (
+                  <Text style={styles.questionEmail}>✉️  {item.email}</Text>
+                ) : (
+                  <Text style={styles.mutedText}>No email provided</Text>
+                )}
+                <Text style={styles.mutedText}>
+                  {new Date(item.created_at).toLocaleDateString(undefined, {
+                    month: 'short', day: 'numeric', year: 'numeric',
+                  })}
+                </Text>
+              </View>
+            </View>
+          )}
+        />
+      )}
+
     </SafeAreaView>
   );
 }
@@ -778,4 +843,9 @@ const styles = StyleSheet.create({
   },
   hubStatValue: { fontSize: 13, fontWeight: '700', color: '#0f172a' },
   hubStatLabel: { fontSize: 10, color: '#94a3b8', fontWeight: '600', marginTop: 1 },
+
+  // Questions tab
+  questionText: { fontSize: 15, fontWeight: '600', color: '#0f172a', lineHeight: 22, marginBottom: 10 },
+  questionMeta: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 4 },
+  questionEmail: { fontSize: 12, color: '#0d9488', fontWeight: '600' },
 });
