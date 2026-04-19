@@ -16,7 +16,6 @@ const FAQ_ITEMS = [
   { q: "faqQ7", a: "faqA7" },
   { q: "faqQ8", a: "faqA8" },
   { q: "faqQ9", a: "faqA9" },
-  { q: "faqQ10", a: "faqA10" },
   { q: "faqQ11", a: "faqA11" },
 ];
 
