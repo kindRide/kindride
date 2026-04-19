@@ -209,8 +209,8 @@ function Dashboard({
         setTotalPoints(pts);
       }
 
-      setMembers((membersData.data ?? []) as MemberRow[]);
-      setRides((ridesData.data ?? []) as RideRow[]);
+      setMembers((membersData.data ?? []) as unknown as MemberRow[]);
+      setRides((ridesData.data ?? []) as unknown as RideRow[]);
       setLoadingData(false);
     };
 
