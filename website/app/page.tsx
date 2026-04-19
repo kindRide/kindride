@@ -1,5 +1,6 @@
 import AskAQuestion from "@/components/AskAQuestion";
 import CommunityNetworkSection from "@/components/CommunityNetworkSection";
+import HowItWorks from "@/components/HowItWorks";
 import DifferenceSection from "@/components/DifferenceSection";
 import DownloadSection from "@/components/DownloadSection";
 import DriverStories from "@/components/DriverStories";
@@ -76,6 +77,10 @@ export default function Home() {
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="bg-[#060f1e] px-8 py-24">
+        <HowItWorks />
       </section>
 
       <section className="bg-[#060f1e] px-8 py-24">
