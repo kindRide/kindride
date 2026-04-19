@@ -1,8 +1,10 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
-import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
+import { LinearGradient } from "expo-linear-gradient";
 import { Link, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Platform,
@@ -17,11 +19,8 @@ import {
 } from "react-native";
 import Reanimated, { FadeInDown } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useTranslation } from "react-i18next";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { useAuth } from "@/lib/auth";
-import { supabase } from "@/lib/supabase";
 import {
   getMultiLegFeatureEnabled,
   getMultiLegStyle,
@@ -29,6 +28,7 @@ import {
   setMultiLegStyle,
   type MultiLegStyle,
 } from "@/lib/multileg-preference";
+import { supabase } from "@/lib/supabase";
 
 const SIMPLIFIED_MODE_KEY = "kindride_simplified_mode";
 const DEFAULT_VIBE_KEY = "kindride_default_vibe";
@@ -352,6 +352,15 @@ export default function SettingsScreen() {
                   <Text style={styles.profileSub}>{t("activeAccount")} ✓</Text>
                 </View>
               </View>
+              <View style={styles.rowDivider} />
+              <SettingRow
+                icon="✏️"
+                iconBg="#f0fdf4"
+                label="Edit Profile"
+                sub="Display name & bio"
+                onPress={() => router.push("/edit-profile")}
+                simplified={S}
+              />
               <View style={styles.rowDivider} />
               <SettingRow
                 icon="🧾"

@@ -1,5 +1,6 @@
 import CommunityNetworkSection from "@/components/CommunityNetworkSection";
 import DifferenceSection from "@/components/DifferenceSection";
+import DownloadSection from "@/components/DownloadSection";
 import DriverStories from "@/components/DriverStories";
 import HubApplicationForm from "@/components/HubApplicationForm";
 import HubShowcase from "@/components/HubShowcase";
@@ -98,6 +99,10 @@ export default function Home() {
 
       <section id="apply" className="bg-[#0c1f3f] px-8 py-24">
         <HubApplicationForm />
+      </section>
+
+      <section id="download" className="bg-[#0c1f3f] px-8 py-24">
+        <DownloadSection />
       </section>
 
       <footer className="bg-[#060f1e] px-8 py-10 text-center text-sm text-white/40">
