@@ -405,6 +405,14 @@ export default function SettingsScreen() {
                 sub="Car make, model, color & plate for passengers"
                 onPress={() => router.push("/vehicle-details")}
                 simplified={S}
+              />
+              <SettingRow
+                icon="🤝"
+                iconBg="#f0fdfa"
+                label="Passenger Preferences"
+                sub="Choose who you'd like to help (women only, elderly, etc.)"
+                onPress={() => router.push("/driver-preferences")}
+                simplified={S}
                 last
               />
             </Reanimated.View>
@@ -633,7 +641,7 @@ export default function SettingsScreen() {
             icon="📄"
             iconBg="#f8fafc"
             label={t("termsOfService", "Terms of Service")}
-            onPress={() => Alert.alert(t("terms"), t("viewTermsAtKindride"))}
+            onPress={() => router.push("/terms-of-service")}
             simplified={S}
             last
           />
