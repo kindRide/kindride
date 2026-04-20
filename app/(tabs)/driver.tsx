@@ -293,6 +293,7 @@ export default function DriverDashboardScreen() {
   const [hubName, setHubName] = useState<string | null>(null);
   const [hubCodeInput, setHubCodeInput] = useState("");
   const [joiningHub, setJoiningHub] = useState(false);
+  const [hubActive, setHubActive] = useState(true);
   const [connectChargesEnabled, setConnectChargesEnabled] = useState<boolean | null>(null);
   const [connectOnboarding, setConnectOnboarding] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -542,11 +543,27 @@ export default function DriverDashboardScreen() {
             car_color: profile.car_color,
             car_plate: profile.car_plate,
             car_year:  profile.car_year ?? null,
+            hub_active: hubActive,
           });
           if (error) throw error;
           setLastSync(new Date());
           setIsAvailable(true);
           setSyncing(false);
+          // Broadcast to Hub members if driver is Hub-active
+          if (hubActive && hubName) {
+            const base = process.env.EXPO_PUBLIC_POINTS_API_URL?.replace("/points/award", "") ?? "";
+            if (base && session?.access_token) {
+              fetch(`${base}/hubs/driver-available`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+                body: JSON.stringify({
+                  display_name: displayName.trim() || "Driver",
+                  heading_direction: resolvedHeading,
+                  intent: overrideIntent || intent,
+                }),
+              }).catch(() => {}); // fire-and-forget, never block the UI
+            }
+          }
           return;
         }
 
@@ -582,10 +599,26 @@ export default function DriverDashboardScreen() {
           updated_at: new Date().toISOString(),
           display_name: displayName.trim() || "Driver",
           tier: "Helper",
+          hub_active: hubActive,
         });
         if (error) throw error;
         setLastSync(new Date());
         setIsAvailable(available);
+        // Broadcast to Hub members when going online
+        if (available && hubActive && hubName) {
+          const base = process.env.EXPO_PUBLIC_POINTS_API_URL?.replace("/points/award", "") ?? "";
+          if (base && session?.access_token) {
+            fetch(`${base}/hubs/driver-available`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+              body: JSON.stringify({
+                display_name: displayName.trim() || "Driver",
+                heading_direction: resolvedHeading,
+                intent: overrideIntent || intent,
+              }),
+            }).catch(() => {}); // fire-and-forget
+          }
+        }
       } catch (e) {
         console.warn(e);
         Alert.alert(t("driverSyncError"), e instanceof Error ? e.message : String(e));
@@ -1108,6 +1141,29 @@ export default function DriverDashboardScreen() {
                   <Text style={styles.successLabel}>{t("hubAffiliated")}</Text>
                   <Text style={styles.successValue}>{hubName}</Text>
                 </View>
+              </View>
+              {/* Hub visibility toggle */}
+              <View style={{ height: 1, backgroundColor: "rgba(13,148,136,0.2)", marginVertical: 10 }} />
+              <View style={[styles.cardRow, { marginTop: 12 }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.successLabel}>
+                    {hubActive ? "Visible to Hub members" : "Hub hidden — platform only"}
+                  </Text>
+                  <Text style={styles.fieldHint}>
+                    {hubActive
+                      ? "Hub members will be notified when you go online."
+                      : "You're driving as a regular member. Hub members won't see you."}
+                  </Text>
+                </View>
+                <Switch
+                  value={hubActive}
+                  onValueChange={(val) => {
+                    setHubActive(val);
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                  trackColor={{ false: "#e2e8f0", true: "#0d9488" }}
+                  thumbColor="#ffffff"
+                />
               </View>
             </View>
           ) : (

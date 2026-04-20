@@ -3814,6 +3814,116 @@ def hubs_my(authorization: str | None = Header(default=None)):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Hub broadcast — driver goes online, notify all Hub members
+# ─────────────────────────────────────────────────────────────────────────────
+
+class HubDriverAvailableRequest(BaseModel):
+    display_name: str = Field(max_length=80)
+    heading_direction: str = Field(max_length=16)
+    intent: str = Field(max_length=32)
+
+
+@app.post("/hubs/driver-available")
+def hub_driver_available(
+    payload: HubDriverAvailableRequest,
+    authorization: str | None = Header(default=None),
+):
+    """
+    Called by the mobile app when a Hub driver goes online with hub_active=true.
+    Looks up all other members of the same Hub and sends them a push notification
+    so they know a driver is available — without them having to open the app first.
+    """
+    _require_config()
+    uid = _verify_user_bearer_token(authorization)
+
+    with httpx.Client() as client:
+        # 1. Find which Hub this driver belongs to
+        r = client.get(
+            _rest_url("/hub_members"),
+            params={
+                "user_id": f"eq.{uid}",
+                "is_active": "eq.true",
+                "select": "hub_id,hubs(name)",
+            },
+            headers=_service_headers(),
+            timeout=15.0,
+        )
+        rows = _rest_json_list(r, "hub_driver_available hub lookup")
+        if not rows:
+            return {"sent": 0, "reason": "driver_not_in_hub"}
+
+        hub_id = rows[0]["hub_id"]
+        hub_obj = rows[0].get("hubs") or {}
+        hub_name = hub_obj.get("name", "Hub") if isinstance(hub_obj, dict) else "Hub"
+
+        # 2. Get all other active Hub members (not the driver themselves)
+        r2 = client.get(
+            _rest_url("/hub_members"),
+            params={
+                "hub_id": f"eq.{hub_id}",
+                "is_active": "eq.true",
+                "user_id": f"neq.{uid}",
+                "select": "user_id",
+            },
+            headers=_service_headers(),
+            timeout=15.0,
+        )
+        members = _rest_json_list(r2, "hub_driver_available members")
+        if not members:
+            return {"sent": 0, "reason": "no_other_members"}
+
+        member_ids = [m["user_id"] for m in members if m.get("user_id")]
+        if not member_ids:
+            return {"sent": 0, "reason": "no_member_ids"}
+
+        # 3. Fetch push tokens for all those members (service role bypasses RLS)
+        member_ids_csv = ",".join(member_ids)
+        r3 = client.get(
+            _rest_url("/push_tokens"),
+            params={
+                "user_id": f"in.({member_ids_csv})",
+                "select": "push_token",
+            },
+            headers=_service_headers(),
+            timeout=15.0,
+        )
+        token_rows = _rest_json_list(r3, "hub_driver_available push_tokens")
+        tokens = [t["push_token"] for t in token_rows if t.get("push_token")]
+
+        if not tokens:
+            return {"sent": 0, "reason": "no_push_tokens"}
+
+        # 4. Build and send the notifications
+        direction = payload.heading_direction.capitalize()
+        intent_text = "heading out" if payload.intent == "already_going" else "making a detour"
+        body = (
+            f"{payload.display_name} is available and heading {direction} — "
+            f"open KindRide to request a ride."
+        )
+
+        messages = [
+            {
+                "to": token,
+                "title": f"🚗 {hub_name} — Driver Available",
+                "body": body,
+                "data": {"type": "hub_driver_available", "hub_id": hub_id},
+                "sound": "default",
+                "priority": "high",
+            }
+            for token in tokens[:100]  # Expo limit per batch
+        ]
+
+        _send_expo_push(messages)
+
+    logger.info(
+        "hub_broadcast sent=%d hub_id=%s driver_id=%s",
+        len(tokens), hub_id, uid,
+        extra={"event_type": "hub_broadcast"},
+    )
+    return {"sent": len(tokens), "hub_id": hub_id, "hub_name": hub_name}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # P2.1 — Stripe Identity Verification
 # ─────────────────────────────────────────────────────────────────────────────
 
