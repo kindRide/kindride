@@ -19,9 +19,10 @@ type HubInfo = {
   slug: string;
   logo_url: string | null;
   subscription_tier: string;
+  access_type: "open" | "closed" | "hybrid";
 };
 
-type JoinState = "loading" | "not_found" | "already_member" | "ready" | "joining" | "done";
+type JoinState = "loading" | "not_found" | "already_member" | "pending" | "ready" | "joining" | "done";
 
 const HUB_TYPE_LABEL: Record<string, string> = {
   university: "University",
@@ -35,6 +36,30 @@ const HUB_TYPE_ICON: Record<string, string> = {
   church: "⛪",
   nonprofit: "🤝",
   corporate: "🏢",
+};
+
+const ACCESS_META: Record<string, { icon: string; label: string; color: string; bg: string; description: string }> = {
+  open: {
+    icon: "🌐",
+    label: "Open Hub",
+    color: "#059669",
+    bg: "#f0fdf4",
+    description: "Anyone with this link can join instantly. No approval needed.",
+  },
+  closed: {
+    icon: "🔒",
+    label: "Closed Hub",
+    color: "#d97706",
+    bg: "#fffbeb",
+    description: "Membership is by approval only. Your request will be reviewed by the hub admin.",
+  },
+  hybrid: {
+    icon: "⚡",
+    label: "Hybrid Hub",
+    color: "#0284c7",
+    bg: "#f0f9ff",
+    description: "Open to join, but Hub-priority matching is enabled after admin verifies your membership.",
+  },
 };
 
 export default function JoinHubScreen() {
@@ -56,7 +81,7 @@ export default function JoinHubScreen() {
       // Fetch hub (RLS: only verified + approved hubs are readable)
       const { data: hubData, error: hubErr } = await supabase
         .from("hubs")
-        .select("id, name, type, slug, logo_url, subscription_tier")
+        .select("id, name, type, slug, logo_url, subscription_tier, access_type")
         .eq("slug", hubSlug)
         .single();
 
@@ -71,17 +96,24 @@ export default function JoinHubScreen() {
         .eq("is_active", true);
       setMemberCount(count ?? null);
 
-      // Check if current user is already a member
+      // Check if current user is already a member or has a pending request
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         const { data: existing } = await supabase
           .from("hub_members")
-          .select("user_id")
+          .select("user_id, status")
           .eq("hub_id", hubData.id)
           .eq("user_id", session.user.id)
           .eq("is_active", true)
           .maybeSingle();
-        if (existing) { setState("already_member"); return; }
+        if (existing) {
+          if ((existing as { status?: string }).status === "pending") {
+            setState("pending");
+          } else {
+            setState("already_member");
+          }
+          return;
+        }
       }
 
       setState("ready");
@@ -103,22 +135,26 @@ export default function JoinHubScreen() {
         return;
       }
 
+      // Closed hubs: status = pending (awaits admin approval)
+      // Open and hybrid hubs: status = active immediately
+      const memberStatus = hub.access_type === "closed" ? "pending" : "active";
+
       const { error } = await supabase.from("hub_members").insert({
         hub_id: hub.id,
         user_id: session.user.id,
         role: "member",
+        status: memberStatus,
       });
 
       if (error) {
         if (error.code === "23505") {
-          // Duplicate — already a member
           setState("already_member");
           return;
         }
         throw error;
       }
 
-      setState("done");
+      setState(memberStatus === "pending" ? "pending" : "done");
     } catch {
       Alert.alert("Error", "Could not join hub. Please try again.");
       setState("ready");
@@ -154,6 +190,30 @@ export default function JoinHubScreen() {
 
   const typeIcon = HUB_TYPE_ICON[hub?.type ?? ""] ?? "🏘️";
   const typeLabel = HUB_TYPE_LABEL[hub?.type ?? ""] ?? hub?.type ?? "";
+
+  // ── Pending approval ──────────────────────────────────────────────────────
+  if (state === "pending") {
+    return (
+      <SafeAreaView style={styles.root} edges={["top"]}>
+        <LinearGradient colors={["#0c1f3f", "#0e4a6e", "#0a5c54"]} style={styles.hero}>
+          <Text style={styles.heroIcon}>{typeIcon}</Text>
+          <Text style={styles.heroTitle}>{hub?.name}</Text>
+          <Text style={styles.heroSub}>{typeLabel} · Closed Hub</Text>
+        </LinearGradient>
+        <View style={styles.doneCard}>
+          <Text style={styles.doneIcon}>⏳</Text>
+          <Text style={styles.doneTitle}>Request sent</Text>
+          <Text style={styles.doneBody}>
+            {hub?.name} is a closed hub. Your request has been sent to the hub admin for approval.
+            You'll be notified once it's reviewed.
+          </Text>
+          <Pressable style={styles.primaryBtn} onPress={() => router.replace("/(tabs)")}>
+            <Text style={styles.primaryBtnText}>Go to KindRide</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   // ── Done / already member ─────────────────────────────────────────────────
   if (state === "done" || state === "already_member") {
@@ -217,11 +277,20 @@ export default function JoinHubScreen() {
           </View>
           <View style={styles.infoDivider} />
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Plan</Text>
-            <Text style={[styles.infoValue, styles.infoValueCap]}>
-              {hub?.subscription_tier ?? "free"}
-            </Text>
+            <Text style={styles.infoLabel}>Access</Text>
+            <View style={[styles.accessBadge, { backgroundColor: ACCESS_META[hub?.access_type ?? "open"].bg }]}>
+              <Text style={[styles.accessBadgeText, { color: ACCESS_META[hub?.access_type ?? "open"].color }]}>
+                {ACCESS_META[hub?.access_type ?? "open"].icon} {ACCESS_META[hub?.access_type ?? "open"].label}
+              </Text>
+            </View>
           </View>
+        </View>
+
+        {/* Access type explanation */}
+        <View style={[styles.accessNote, { backgroundColor: ACCESS_META[hub?.access_type ?? "open"].bg, borderColor: ACCESS_META[hub?.access_type ?? "open"].color + "33" }]}>
+          <Text style={[styles.accessNoteText, { color: ACCESS_META[hub?.access_type ?? "open"].color }]}>
+            {ACCESS_META[hub?.access_type ?? "open"].description}
+          </Text>
         </View>
 
         {/* Benefit list */}
@@ -329,6 +398,17 @@ const styles = StyleSheet.create({
     fontSize: 15, color: "#64748b", textAlign: "center",
     lineHeight: 22, maxWidth: 300,
   },
+
+  // Access type
+  accessBadge: {
+    borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4,
+  },
+  accessBadgeText: { fontSize: 12, fontWeight: "700" },
+  accessNote: {
+    borderRadius: 12, borderWidth: 1,
+    paddingHorizontal: 14, paddingVertical: 12,
+  },
+  accessNoteText: { fontSize: 13, fontWeight: "600", lineHeight: 19 },
 
   // Done
   doneCard: {

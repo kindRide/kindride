@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabase";
 
 type HubType = "university" | "church" | "nonprofit" | "corporate";
+type AccessType = "open" | "closed" | "hybrid";
 
 type HubRecord = {
   id: string;
@@ -13,6 +14,7 @@ type HubRecord = {
   type: HubType;
   slug: string;
   logo_url: string | null;
+  access_type: AccessType;
 };
 
 type HubCard = HubRecord & {
@@ -26,6 +28,12 @@ const badgeClasses: Record<HubType, string> = {
   corporate: "bg-[#1d4ed8] text-white",
 };
 
+const accessMeta: Record<AccessType, { icon: string; label: string; classes: string; cta: string }> = {
+  open:   { icon: "🌐", label: "Open",   classes: "bg-emerald-50 text-emerald-700 border border-emerald-200", cta: "Join now" },
+  closed: { icon: "🔒", label: "Closed", classes: "bg-amber-50 text-amber-700 border border-amber-200",     cta: "Request access" },
+  hybrid: { icon: "⚡", label: "Hybrid", classes: "bg-sky-50 text-sky-700 border border-sky-200",           cta: "Join now" },
+};
+
 export default function HubShowcase() {
   const [hubs, setHubs] = useState<HubCard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,7 +44,7 @@ export default function HubShowcase() {
       try {
         const { data, error: hubError } = await supabase
           .from("hubs")
-          .select("id, name, type, slug, logo_url")
+          .select("id, name, type, slug, logo_url, access_type")
           .eq("verified", true)
           .not("approved_by", "is", null);
 
@@ -132,21 +140,34 @@ export default function HubShowcase() {
                     className="h-full w-full object-cover"
                   />
                 ) : (
-                  <span className="text-3xl font-bold text-slate-400">O</span>
+                  <span className="text-3xl font-bold text-slate-400">
+                    {hub.name.charAt(0).toUpperCase()}
+                  </span>
                 )}
               </div>
-              <span
-                className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] ${badgeClasses[hub.type]}`}
-              >
-                {hub.type}
-              </span>
+              <div className="flex flex-col items-end gap-1.5">
+                <span className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] ${badgeClasses[hub.type]}`}>
+                  {hub.type}
+                </span>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${accessMeta[hub.access_type ?? "open"].classes}`}>
+                  {accessMeta[hub.access_type ?? "open"].icon} {accessMeta[hub.access_type ?? "open"].label}
+                </span>
+              </div>
             </div>
 
             <h3 className="text-2xl font-black tracking-tight text-slate-900">{hub.name}</h3>
             <p className="mt-2 text-sm font-medium text-slate-500">kindride.app/join/{hub.slug}</p>
-            <p className="mt-6 text-base font-semibold text-slate-700">
-              {hub.memberCount.toLocaleString()} {hub.memberCount === 1 ? "member" : "members"}
-            </p>
+            <div className="mt-6 flex items-center justify-between">
+              <p className="text-base font-semibold text-slate-700">
+                {hub.memberCount.toLocaleString()} {hub.memberCount === 1 ? "member" : "members"}
+              </p>
+              <a
+                href={`kindride://join/${hub.slug}`}
+                className="rounded-xl bg-[#0d9488] px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-[#0f766e]"
+              >
+                {accessMeta[hub.access_type ?? "open"].cta} →
+              </a>
+            </div>
           </motion.div>
         ))}
       </div>
