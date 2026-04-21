@@ -21,11 +21,13 @@ import { useTranslation } from 'react-i18next';
 
 export default function SignInScreen() {
   const { t } = useTranslation();
+  const [method, setMethod] = useState<'otp' | 'password'>('password');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [otp, setOtp] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [loading, setLoading] = useState(false);
-  const { signInWithEmailOtp, verifyEmailOtp } = useAuth();
+  const { signIn, signInWithEmailOtp, verifyEmailOtp } = useAuth();
   const router = useRouter();
 
   const handleSendOtp = async () => {
@@ -83,6 +85,25 @@ export default function SignInScreen() {
     }
   };
 
+  const handlePasswordSignIn = async () => {
+    if (!email.trim() || !password.trim()) {
+      Alert.alert('Missing details', 'Please enter your email and password.');
+      return;
+    }
+    setLoading(true);
+    const { error } = await signIn(email.trim(), password.trim());
+    setLoading(false);
+    if (error) {
+      Alert.alert('Sign in failed', error);
+    } else {
+      const session = await supabase?.auth.getSession();
+      const user = session?.data.session?.user ?? null;
+      if (!user) { Alert.alert('Error', 'Could not load session. Please try again.'); return; }
+      const consentGiven = await hasRecordingConsent(user.id);
+      router.replace(consentGiven ? '/(tabs)' : '/complete-signup');
+    }
+  };
+
   const handleBack = () => { setOtpSent(false); setOtp(''); };
 
   return (
@@ -124,7 +145,26 @@ export default function SignInScreen() {
         {/* ── Form card ── */}
         <View style={styles.card}>
 
-          {!otpSent ? (
+          {/* Method toggle */}
+          {!otpSent && (
+            <View style={styles.methodRow}>
+              <Pressable
+                style={[styles.methodBtn, method === 'password' && styles.methodBtnActive]}
+                onPress={() => setMethod('password')}
+              >
+                <Text style={[styles.methodText, method === 'password' && styles.methodTextActive]}>Password</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.methodBtn, method === 'otp' && styles.methodBtnActive]}
+                onPress={() => setMethod('otp')}
+              >
+                <Text style={[styles.methodText, method === 'otp' && styles.methodTextActive]}>Email code</Text>
+              </Pressable>
+            </View>
+          )}
+
+          {/* Password method */}
+          {method === 'password' && !otpSent ? (
             <>
               <Text style={styles.fieldLabel}>{t('emailAddressLabel', 'Email address')}</Text>
               <TextInput
@@ -138,7 +178,43 @@ export default function SignInScreen() {
                 autoCorrect={false}
                 autoComplete="email"
               />
-
+              <Text style={styles.fieldLabel}>Password</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your password"
+                placeholderTextColor="#94a3b8"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="password"
+              />
+              <Pressable
+                style={[styles.primaryBtn, loading && styles.btnDisabled]}
+                onPress={handlePasswordSignIn}
+                disabled={loading}
+              >
+                {loading
+                  ? <ActivityIndicator color="#fff" />
+                  : <Text style={styles.primaryBtnText}>Sign in →</Text>
+                }
+              </Pressable>
+            </>
+          ) : !otpSent ? (
+            <>
+              <Text style={styles.fieldLabel}>{t('emailAddressLabel', 'Email address')}</Text>
+              <TextInput
+                style={styles.input}
+                placeholder={t('emailPlaceholder', 'you@example.com')}
+                placeholderTextColor="#94a3b8"
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="email"
+              />
               <Pressable
                 style={[styles.primaryBtn, loading && styles.btnDisabled]}
                 onPress={handleSendOtp}
