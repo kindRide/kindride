@@ -17,6 +17,9 @@ export default function Home() {
           Kind<span className="text-teal-400">Ride</span>
         </span>
         <div className="flex gap-6 text-sm font-semibold text-white/70">
+          <a href="#how-it-works" className="transition-colors hover:text-white">
+            How It Works
+          </a>
           <a href="#hubs" className="transition-colors hover:text-white">
             Hubs
           </a>
@@ -79,7 +82,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="bg-[#060f1e] px-8 py-24">
+      <section id="how-it-works" className="bg-[#060f1e] px-8 py-24">
         <HowItWorks />
       </section>
 
