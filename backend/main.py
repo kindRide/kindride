@@ -1021,6 +1021,7 @@ def _haversine_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> flo
 # Same defaults as GET /matching/search (keep in sync for eligibility).
 _MATCHING_SEARCH_RADIUS_M = 20000.0  # 20km default — wide enough for test networks
 _STALE_DRIVER_PRESENCE_MINUTES = 10
+_MATCHING_FALLBACK_SCAN_LIMIT = int(os.getenv("KINDRIDE_MATCHING_FALLBACK_SCAN_LIMIT", "250"))
 
 
 def _bearing_degrees(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -1154,7 +1155,7 @@ def _matching_search_fallback_driver_presence(
     params = {
         "is_available": "eq.true",
         "select": "driver_id,display_name,tier,intent,heading_direction,current_lat,current_lng,is_available,id_verified,is_founding_driver,updated_at",
-        "limit": "500",
+        "limit": str(_MATCHING_FALLBACK_SCAN_LIMIT),
     }
     r = client.get(_rest_url("/driver_presence"), params=params, headers=_service_headers(), timeout=30.0)
     if r.status_code != 200:
@@ -3258,19 +3259,21 @@ def complete_ride(
             total_points_awarded += points_earned
 
         # P1.4 Points Ledger Parity: Evaluate First Ride & 7-Day Streak bonuses
-        bonuses = _evaluate_daily_bonuses(client, completing_driver_id, ride_id, datetime.now(timezone.utc))
-        for action_name, bonus_pts, tag in bonuses:
-            b_earned, b_idem = _award_points_with_idempotency(
-                client=client,
-                driver_id=completing_driver_id,
-                ride_id=ride_id,
-                idempotency_key=f"{ride_id}:{tag}",
-                action=action_name,
-                points=bonus_pts,
-                metadata={"ride_id": ride_id, "bonus_type": tag}
-            )
-            if not b_idem:
-                total_points_awarded += b_earned
+        # Guard: completing_driver_id may be None in passenger-only or anonymous flows.
+        if completing_driver_id:
+            bonuses = _evaluate_daily_bonuses(client, completing_driver_id, ride_id, datetime.now(timezone.utc))
+            for action_name, bonus_pts, tag in bonuses:
+                b_earned, b_idem = _award_points_with_idempotency(
+                    client=client,
+                    driver_id=completing_driver_id,
+                    ride_id=ride_id,
+                    idempotency_key=f"{ride_id}:{tag}",
+                    action=action_name,
+                    points=bonus_pts,
+                    metadata={"ride_id": ride_id, "bonus_type": tag}
+                )
+                if not b_idem:
+                    total_points_awarded += b_earned
 
     # Referral bonus: award 50 pts to both parties on the referred user's first ride
     referral_subject = completing_driver_id or (payload.passengerId if payload.passengerId else None)
@@ -3372,6 +3375,81 @@ def health_supabase():
             ),
             "body_preview": r.text[:400],
         }
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+@app.get("/health/rides-schema")
+def health_rides_schema():
+    """
+    Checks whether the `rides` table exposes columns required by modern ride flow.
+    Useful when `POST /rides/start-search` fails with 502 due to stale DB schema.
+    """
+    _require_config()
+    required_columns = [
+        "id",
+        "driver_id",
+        "passenger_id",
+        "status",
+        "pending_driver_id",
+        "request_expires_at",
+        "pickup_lat",
+        "pickup_lng",
+        "destination_lat",
+        "destination_lng",
+        "destination_label",
+        "journey_id",
+        "leg_index",
+    ]
+    expected_status_values = [
+        "searching",
+        "requested",
+        "accepted",
+        "in_progress",
+        "completed",
+        "declined",
+        "expired",
+        "cancelled",
+    ]
+
+    try:
+        with httpx.Client() as client:
+            # If any selected column does not exist, PostgREST returns 400 with details.
+            r = client.get(
+                _rest_url("/rides"),
+                params={"select": ",".join(required_columns), "limit": "1"},
+                headers=_service_headers(),
+                timeout=20.0,
+            )
+
+            if r.status_code == 200:
+                return {
+                    "ok": True,
+                    "checked_columns": required_columns,
+                    "expected_status_values": expected_status_values,
+                    "status_constraint_note": (
+                        "Column check passed. If /rides/start-search still fails, run "
+                        "supabase/rides_lifecycle.sql to update status constraints."
+                    ),
+                    "recommended_migrations": [
+                        "supabase/rides_schema.sql",
+                        "supabase/rides_geo.sql",
+                        "supabase/rides_lifecycle.sql",
+                        "supabase/journeys_multileg.sql",
+                        "supabase/rides_leg_distance.sql",
+                        "supabase/rides_trip_time.sql",
+                    ],
+                }
+
+            return {
+                "ok": False,
+                "postgrest_http_status": r.status_code,
+                "error": "rides schema check failed",
+                "body_preview": r.text[:500],
+                "required_columns": required_columns,
+                "expected_status_values": expected_status_values,
+                "recommended_migration": "Run supabase/rides_lifecycle.sql (and related rides migrations).",
+            }
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 

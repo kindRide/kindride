@@ -1,4 +1,5 @@
 import { useFocusEffect } from "@react-navigation/native";
+import * as Clipboard from "expo-clipboard";
 import * as Location from "expo-location";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -539,6 +540,92 @@ export default function RideRequestScreen() {
         return "";
     }
   }, [matchingFeed, originPoint, t]);
+
+  const noMatchDiagnostics = useMemo(() => {
+    if (isScanning || drivers.length > 0) return [] as string[];
+    const reasons: string[] = [];
+
+    if (!destination) {
+      reasons.push("No destination is selected yet.");
+    }
+    if (!originPoint) {
+      reasons.push("Current location is missing or location permission was denied.");
+    }
+    if (backendStatus === "offline") {
+      reasons.push("Backend is offline right now.");
+    }
+    if (driverStartSearchError) {
+      reasons.push(`Ride session error: ${driverStartSearchError}`);
+    }
+    if (matchingFeedError) {
+      reasons.push(`Matching API error: ${matchingFeedError}`);
+    }
+    if (matchingFeed === "fallback") {
+      reasons.push("Live matching is unavailable, so fallback mode is active.");
+    }
+    if (backgroundAutoPaused) {
+      reasons.push("Background auto-search paused after a long wait. Tap 'Search again now'.");
+    }
+    if (manualRefreshHint && !driverStartSearchError && !matchingFeedError) {
+      reasons.push(`Latest search note: ${manualRefreshHint}`);
+    }
+    if (reasons.length === 0) {
+      reasons.push(
+        "No visible blockers detected. Most likely causes are distance (outside current search radius), stale driver GPS, or the same account being used as both passenger and driver."
+      );
+    }
+    return reasons;
+  }, [
+    isScanning,
+    drivers.length,
+    destination,
+    originPoint,
+    backendStatus,
+    driverStartSearchError,
+    matchingFeedError,
+    matchingFeed,
+    backgroundAutoPaused,
+    manualRefreshHint,
+  ]);
+
+  const copyNoMatchDebugReport = useCallback(async () => {
+    const lines: string[] = [
+      "KindRide Rider Debug Report",
+      `time=${new Date().toISOString()}`,
+      `matchingFeed=${matchingFeed}`,
+      `driversCount=${drivers.length}`,
+      `isScanning=${String(isScanning)}`,
+      `backgroundAutoPaused=${String(backgroundAutoPaused)}`,
+      `backendStatus=${backendStatus}`,
+      `hasDestination=${String(Boolean(destination))}`,
+      `hasOriginPoint=${String(Boolean(originPoint))}`,
+      `driverStartSearchError=${driverStartSearchError ?? "none"}`,
+      `matchingFeedError=${matchingFeedError ?? "none"}`,
+      `manualRefreshHint=${manualRefreshHint ?? "none"}`,
+      "reasons:",
+      ...noMatchDiagnostics.map((r) => `- ${r}`),
+    ];
+    const report = lines.join("\n");
+    try {
+      await Clipboard.setStringAsync(report);
+      Alert.alert(t("copied", "Copied"), t("debugReportCopied", "Debug report copied to clipboard."));
+    } catch {
+      Alert.alert(t("copyFailed", "Copy failed"), report);
+    }
+  }, [
+    matchingFeed,
+    drivers.length,
+    isScanning,
+    backgroundAutoPaused,
+    backendStatus,
+    destination,
+    originPoint,
+    driverStartSearchError,
+    matchingFeedError,
+    manualRefreshHint,
+    noMatchDiagnostics,
+    t,
+  ]);
 
   /**
    * When the driver card id is a real Supabase user UUID and the backend is configured,
@@ -1200,6 +1287,11 @@ export default function RideRequestScreen() {
         ) : driverRequestStatus ? (
           <Text style={styles.driverRequestStatus}>{driverRequestStatus}</Text>
         ) : null}
+        {!isScanning ? (
+          <Pressable style={styles.copyDebugTopBtn} onPress={() => void copyNoMatchDebugReport()}>
+            <Text style={styles.copyDebugTopBtnText}>{t("copyDebugReport", "Copy Debug Report")}</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       {isScanning ? (
@@ -1251,6 +1343,14 @@ export default function RideRequestScreen() {
           {manualRefreshHint ? (
             <Text style={styles.manualRefreshHint}>{manualRefreshHint}</Text>
           ) : null}
+          <View style={styles.diagnosticsCard}>
+            <Text style={styles.diagnosticsTitle}>{t("debugNoMatchTitle", "Debug: why no driver is shown")}</Text>
+            {noMatchDiagnostics.map((reason, idx) => (
+              <Text key={`${reason}-${idx}`} style={styles.diagnosticsItem}>
+                {"\u2022"} {reason}
+              </Text>
+            ))}
+          </View>
         </View>
       ) : (
         <FlatList
@@ -1509,6 +1609,43 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 18,
     maxWidth: 320,
+  },
+  diagnosticsCard: {
+    marginTop: 14,
+    width: "100%",
+    maxWidth: 380,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#fcd34d",
+    backgroundColor: "#fffbeb",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    gap: 6,
+  },
+  diagnosticsTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#92400e",
+  },
+  diagnosticsItem: {
+    fontSize: 12,
+    color: "#78350f",
+    lineHeight: 17,
+  },
+  copyDebugTopBtn: {
+    marginTop: 10,
+    alignSelf: "flex-start",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#2563eb",
+    backgroundColor: "#eff6ff",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  copyDebugTopBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#1d4ed8",
   },
   listContent: {
     paddingBottom: 14,

@@ -117,6 +117,7 @@ export default function ActiveTripScreen() {
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [liveDriverLocation, setLiveDriverLocation] = useState<LatLng | null>(null);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
 
   useEffect(() => {
     supabase?.auth.getSession().then(({ data }) => setCurrentUserId(data.session?.user?.id ?? null));
@@ -375,6 +376,41 @@ export default function ActiveTripScreen() {
       supabase.removeChannel(channel);
     };
   }, [currentUserId, driverId]);
+
+  // Chat unread badge: count INSERT events from the other party while not on chat screen.
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const chatEligible =
+    (rideStatus === "accepted" || rideStatus === "in_progress") &&
+    uuidRe.test(rideId) &&
+    !!currentUserId &&
+    !!supabase;
+
+  useEffect(() => {
+    if (!chatEligible) return;
+
+    const channel = supabase!
+      .channel(`chat-badge:${rideId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "trip_messages",
+          filter: `ride_id=eq.${rideId}`,
+        },
+        (payload) => {
+          const msg = payload.new as { sender_id?: string };
+          if (msg.sender_id && msg.sender_id !== currentUserId) {
+            setUnreadChatCount((prev) => prev + 1);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase!.removeChannel(channel);
+    };
+  }, [chatEligible, rideId, currentUserId]);
 
   // Background search for the next driver while riding with current driver.
   // We only do this when multi-leg is active (autoJourneyId) and after boarding countdown ends.
@@ -724,15 +760,22 @@ export default function ActiveTripScreen() {
         <Text style={styles.statusText}>{tripStatus}</Text>
         {(rideStatus === "accepted" || rideStatus === "in_progress") ? (
           <Pressable
-            onPress={() =>
-              router.push({
-                pathname: "/trip-chat",
-                params: { rideId },
-              })
-            }
+            onPress={() => {
+              setUnreadChatCount(0);
+              router.push({ pathname: "/trip-chat", params: { rideId } });
+            }}
             style={styles.chatButton}
           >
-            <Text style={styles.chatButtonText}>Chat</Text>
+            <View style={styles.chatButtonInner}>
+              <Text style={styles.chatButtonText}>Chat</Text>
+              {unreadChatCount > 0 && (
+                <View style={styles.chatBadge}>
+                  <Text style={styles.chatBadgeText}>
+                    {unreadChatCount > 9 ? "9+" : String(unreadChatCount)}
+                  </Text>
+                </View>
+              )}
+            </View>
           </Pressable>
         ) : null}
         {rideStatus === "accepted" ? (
@@ -1168,10 +1211,30 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#0d9488",
   },
+  chatButtonInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   chatButtonText: {
     color: "#ffffff",
     fontSize: 15,
     fontWeight: "700",
+  },
+  chatBadge: {
+    backgroundColor: "#ef4444",
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 5,
+  },
+  chatBadgeText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "800",
+    lineHeight: 13,
   },
   cancelRideButton: {
     marginTop: 14,

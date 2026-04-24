@@ -1,6 +1,6 @@
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from "expo-camera";
-import { useState, useEffect, useRef } from "react";
-import { Alert, Pressable, StyleSheet, Text, View, Animated } from "react-native";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View, Animated } from "react-native";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/lib/supabase";
 import { getRideStatusUrlOrNull } from "@/lib/backend-api-urls";
@@ -12,8 +12,11 @@ export default function SessionRecorder({ isActive, rideId }: Props) {
   const [permission, requestPermission] = useCameraPermissions();
   const [micPermission, requestMicPermission] = useMicrophonePermissions();
   const [flagged, setFlagged] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [previewUnavailable, setPreviewUnavailable] = useState(false);
   const cameraRef = useRef<CameraView>(null);
   const isRecordingRef = useRef(false);
+  const cameraReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const blinkAnim = useRef(new Animated.Value(1)).current;
 
@@ -27,38 +30,31 @@ export default function SessionRecorder({ isActive, rideId }: Props) {
   }, [blinkAnim]);
 
   useEffect(() => {
-    let isMounted = true;
-
-    const startRecording = async () => {
-      if (!isActive || !permission?.granted || !micPermission?.granted) return;
-      if (!cameraRef.current || isRecordingRef.current) return;
-      
-      try {
-        isRecordingRef.current = true;
-        // Record video (maxes out or runs until component unmounts and stopRecording is called)
-        const video = await cameraRef.current.recordAsync();
-        if (video && isMounted) {
-          await uploadVideo(video.uri);
-        }
-      } catch (e) {
-        console.error("Recording failed", e);
-      } finally {
-        isRecordingRef.current = false;
+    if (!isActive || !permission?.granted || !micPermission?.granted) {
+      setCameraReady(false);
+      setPreviewUnavailable(false);
+      if (cameraReadyTimeoutRef.current) {
+        clearTimeout(cameraReadyTimeoutRef.current);
+        cameraReadyTimeoutRef.current = null;
       }
-    };
+      return;
+    }
 
-    const timer = setTimeout(startRecording, 1000);
+    setCameraReady(false);
+    setPreviewUnavailable(false);
+    cameraReadyTimeoutRef.current = setTimeout(() => {
+      setPreviewUnavailable(true);
+    }, 8000);
 
     return () => {
-      isMounted = false;
-      clearTimeout(timer);
-      if (isRecordingRef.current && cameraRef.current) {
-        cameraRef.current.stopRecording();
+      if (cameraReadyTimeoutRef.current) {
+        clearTimeout(cameraReadyTimeoutRef.current);
+        cameraReadyTimeoutRef.current = null;
       }
     };
-  }, [isActive, permission, micPermission]);
+  }, [isActive, permission?.granted, micPermission?.granted]);
 
-  const uploadVideo = async (uri: string) => {
+  const uploadVideo = useCallback(async (uri: string) => {
     if (!supabase) return;
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -91,7 +87,41 @@ export default function SessionRecorder({ isActive, rideId }: Props) {
     } catch (e) {
       console.error("Upload failed", e);
     }
-  };
+  }, [rideId]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const startRecording = async () => {
+      if (!isActive || !permission?.granted || !micPermission?.granted) return;
+      if (!cameraReady && !previewUnavailable) return;
+      if (!cameraRef.current || isRecordingRef.current) return;
+      
+      try {
+        isRecordingRef.current = true;
+        // Record video (maxes out or runs until component unmounts and stopRecording is called)
+        const video = await cameraRef.current.recordAsync();
+        if (video && isMounted) {
+          await uploadVideo(video.uri);
+        }
+      } catch (e) {
+        console.error("Recording failed", e);
+      } finally {
+        isRecordingRef.current = false;
+      }
+    };
+
+    const timer = setTimeout(startRecording, 1000);
+    const currentCamera = cameraRef.current;
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+      if (isRecordingRef.current && currentCamera) {
+        currentCamera.stopRecording();
+      }
+    };
+  }, [isActive, permission?.granted, micPermission?.granted, cameraReady, previewUnavailable, uploadVideo]);
 
   const handleFlagTrip = async () => {
     setFlagged(true);
@@ -143,10 +173,30 @@ export default function SessionRecorder({ isActive, rideId }: Props) {
       <View style={styles.previewRow}>
         <CameraView
           ref={cameraRef}
-          style={styles.preview}
+          style={[styles.preview, !cameraReady && styles.previewHidden]}
           facing="front"
           mode="video"
+          onCameraReady={() => {
+            setCameraReady(true);
+            if (cameraReadyTimeoutRef.current) {
+              clearTimeout(cameraReadyTimeoutRef.current);
+              cameraReadyTimeoutRef.current = null;
+            }
+          }}
         />
+        {!cameraReady && !previewUnavailable ? (
+          <View style={styles.previewOverlay}>
+            <ActivityIndicator size="small" color="#ffffff" />
+            <Text style={styles.previewOverlayText}>Camera starting...</Text>
+          </View>
+        ) : null}
+        {previewUnavailable ? (
+          <View style={styles.previewOverlay}>
+            <Text style={styles.previewOverlayText}>
+              Camera preview unavailable. Audio recording is active.
+            </Text>
+          </View>
+        ) : null}
         {/* Semi-transparent top bar — does NOT cover the live preview */}
         <View style={styles.recordingBar}>
           <Text style={styles.recordingBarText}>🔴  {t("recordingStoredSecurely")}</Text>
@@ -182,6 +232,24 @@ const styles = StyleSheet.create({
   },
   preview: {
     flex: 1,
+  },
+  previewHidden: {
+    opacity: 0,
+  },
+  previewOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    backgroundColor: "#0f172a",
+    gap: 8,
+  },
+  previewOverlayText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "600",
+    textAlign: "center",
+    lineHeight: 18,
   },
   recordingBar: {
     position: "absolute",

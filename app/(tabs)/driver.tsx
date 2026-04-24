@@ -538,6 +538,7 @@ export default function DriverDashboardScreen() {
             updated_at: new Date().toISOString(),
             display_name: displayName.trim() || "Driver",
             tier: "Helper",
+            id_verified: idVerified ?? false,
             car_make:  profile.car_make,
             car_model: profile.car_model,
             car_color: profile.car_color,
@@ -599,6 +600,7 @@ export default function DriverDashboardScreen() {
           updated_at: new Date().toISOString(),
           display_name: displayName.trim() || "Driver",
           tier: "Helper",
+          id_verified: idVerified ?? false,
           hub_active: hubActive,
         });
         if (error) throw error;
