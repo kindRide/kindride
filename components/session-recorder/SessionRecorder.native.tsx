@@ -85,7 +85,7 @@ export default function SessionRecorder({ isActive, rideId }: Props) {
         });
       }
     } catch (e) {
-      console.error("Upload failed", e);
+      console.warn("Upload failed (non-critical):", e);
     }
   }, [rideId]);
 
@@ -105,7 +105,7 @@ export default function SessionRecorder({ isActive, rideId }: Props) {
           await uploadVideo(video.uri);
         }
       } catch (e) {
-        console.error("Recording failed", e);
+        console.warn("Recording failed (non-critical):", e);
       } finally {
         isRecordingRef.current = false;
       }

@@ -3070,10 +3070,10 @@ def complete_ride(
             body["journey_id"] = payload.journeyId
             body["leg_index"] = payload.legIndex
         # ── M8 Minimum Trip Duration Guard ───────────────────────────────────
-        # Hard-block points if startedAt is present and the trip lasted < 2 minutes.
+        # Hard-block points if startedAt is present and the trip lasted < minimum duration.
         # Prevents two users sitting still and farming points by fake-completing rides.
-        # 2-minute floor is generous — even a 0.1-mile block takes ~30 seconds driving.
-        _MIN_TRIP_DURATION_SECONDS = 120
+        # Configurable via KINDRIDE_MIN_TRIP_SECONDS (default 120). Set to 30 for testing.
+        _MIN_TRIP_DURATION_SECONDS = int((os.getenv("KINDRIDE_MIN_TRIP_SECONDS") or "120").split()[0])
         if payload.startedAt:
             try:
                 start_dt = datetime.fromisoformat(payload.startedAt.replace("Z", "+00:00"))
