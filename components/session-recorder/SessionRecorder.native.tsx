@@ -62,7 +62,7 @@ export default function SessionRecorder({ isActive, rideId }: Props) {
       if (!token) return;
 
       const fileName = `${rideId}-${Date.now()}.mp4`;
-      const filePath = `${sessionData.session.user.id}/${fileName}`;
+      const filePath = `${sessionData.session!.user.id}/${fileName}`;
       
       // React Native on Android does not reliably support Blob from local file URIs.
       // ArrayBuffer is fully supported by RN's fetch and by the Supabase storage client.
@@ -126,9 +126,10 @@ export default function SessionRecorder({ isActive, rideId }: Props) {
   const handleFlagTrip = async () => {
     setFlagged(true);
     try {
+      if (!supabase) return;
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token;
-      if (!token || !supabase) return;
+      if (!token) return;
 
       const baseUrl = getRideStatusUrlOrNull("dummy")?.split("/rides/")[0];
       if (baseUrl) {
@@ -186,15 +187,16 @@ export default function SessionRecorder({ isActive, rideId }: Props) {
         />
         {!cameraReady && !previewUnavailable ? (
           <View style={styles.previewOverlay}>
-            <ActivityIndicator size="small" color="#ffffff" />
-            <Text style={styles.previewOverlayText}>Camera starting...</Text>
+            <Text style={styles.previewOverlayIcon}>📷</Text>
+            <ActivityIndicator size="small" color="#0d9488" style={{ marginTop: 6 }} />
+            <Text style={styles.previewOverlayText}>Camera starting…</Text>
           </View>
         ) : null}
         {previewUnavailable ? (
           <View style={styles.previewOverlay}>
-            <Text style={styles.previewOverlayText}>
-              Camera preview unavailable. Audio recording is active.
-            </Text>
+            <Text style={styles.previewOverlayIcon}>🎙️</Text>
+            <Text style={styles.previewOverlayText}>Camera preview unavailable</Text>
+            <Text style={styles.previewOverlaySub}>Audio recording is active</Text>
           </View>
         ) : null}
         {/* Semi-transparent top bar — does NOT cover the live preview */}
@@ -241,15 +243,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 16,
-    backgroundColor: "#0f172a",
-    gap: 8,
+    backgroundColor: "rgba(15,23,42,0.92)",
+    gap: 4,
+  },
+  previewOverlayIcon: {
+    fontSize: 22,
+    marginBottom: 2,
   },
   previewOverlayText: {
-    color: "#ffffff",
+    color: "#e2e8f0",
     fontSize: 12,
     fontWeight: "600",
     textAlign: "center",
     lineHeight: 18,
+  },
+  previewOverlaySub: {
+    color: "#0d9488",
+    fontSize: 11,
+    fontWeight: "600",
+    textAlign: "center",
   },
   recordingBar: {
     position: "absolute",

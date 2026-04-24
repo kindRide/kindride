@@ -1021,7 +1021,7 @@ def _haversine_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> flo
 # Same defaults as GET /matching/search (keep in sync for eligibility).
 _MATCHING_SEARCH_RADIUS_M = 20000.0  # 20km default — wide enough for test networks
 _STALE_DRIVER_PRESENCE_MINUTES = 10
-_MATCHING_FALLBACK_SCAN_LIMIT = int(os.getenv("KINDRIDE_MATCHING_FALLBACK_SCAN_LIMIT", "250"))
+_MATCHING_FALLBACK_SCAN_LIMIT = int((os.getenv("KINDRIDE_MATCHING_FALLBACK_SCAN_LIMIT") or "250").split()[0])
 
 
 def _bearing_degrees(lat1: float, lng1: float, lat2: float, lng2: float) -> float:

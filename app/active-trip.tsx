@@ -764,10 +764,12 @@ export default function ActiveTripScreen() {
               setUnreadChatCount(0);
               router.push({ pathname: "/trip-chat", params: { rideId } });
             }}
-            style={styles.chatButton}
+            style={[styles.chatButton, unreadChatCount > 0 && styles.chatButtonUnread]}
           >
             <View style={styles.chatButtonInner}>
-              <Text style={styles.chatButtonText}>Chat</Text>
+              <Text style={[styles.chatButtonText, unreadChatCount > 0 && styles.chatButtonTextUnread]}>
+                💬  {unreadChatCount > 0 ? `${unreadChatCount} new message${unreadChatCount > 1 ? "s" : ""}` : "Chat"}
+              </Text>
               {unreadChatCount > 0 && (
                 <View style={styles.chatBadge}>
                   <Text style={styles.chatBadgeText}>
@@ -1204,12 +1206,18 @@ const styles = StyleSheet.create({
   },
   chatButton: {
     marginTop: 14,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingVertical: 14,
     minHeight: 50,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "#f0fdf4",
+    borderWidth: 1.5,
+    borderColor: "#0d9488",
+  },
+  chatButtonUnread: {
     backgroundColor: "#0d9488",
+    borderColor: "#0d9488",
   },
   chatButtonInner: {
     flexDirection: "row",
@@ -1217,9 +1225,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   chatButtonText: {
-    color: "#ffffff",
+    color: "#0d9488",
     fontSize: 15,
     fontWeight: "700",
+  },
+  chatButtonTextUnread: {
+    color: "#ffffff",
   },
   chatBadge: {
     backgroundColor: "#ef4444",
