@@ -332,6 +332,23 @@ export default function SettingsScreen() {
         </LinearGradient>
 
         {/* ── ACCOUNT ──────────────────────────────────────────────────────── */}
+        {user ? (
+          <>
+            <SectionLabel label="Community" delay={70} />
+            <Reanimated.View entering={FadeInDown.delay(85).springify()} style={styles.group}>
+              <SettingRow
+                icon="🏛"
+                iconBg="#f0fdfa"
+                label="My Hubs"
+                sub="Communities you've joined"
+                onPress={() => router.push("/my-hubs")}
+                simplified={S}
+                last
+              />
+            </Reanimated.View>
+          </>
+        ) : null}
+
         <SectionLabel label={t("account", "Account")} delay={80} />
         <Reanimated.View entering={FadeInDown.delay(100).springify()} style={styles.group}>
           {user ? (

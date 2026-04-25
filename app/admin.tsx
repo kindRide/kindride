@@ -7,12 +7,15 @@ import {
   Pressable,
   ActivityIndicator,
   Alert,
+  Modal,
   RefreshControl,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
+import { getRideStatusUrlOrNull } from '@/lib/backend-api-urls';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -114,6 +117,11 @@ export default function AdminScreen() {
   // Drivers state
   const [drivers, setDrivers] = useState<DriverRow[]>([]);
   const [driversRefreshing, setDriversRefreshing] = useState(false);
+  const [pointsModal, setPointsModal] = useState<{ userId: string; displayName: string } | null>(null);
+  const [pointsDelta, setPointsDelta] = useState("");
+  const [pointsReason, setPointsReason] = useState("");
+  const [pointsSubmitting, setPointsSubmitting] = useState(false);
+  const [pointsError, setPointsError] = useState<string | null>(null);
 
   // Rides state
   const [rides, setRides] = useState<RideRow[]>([]);
@@ -322,6 +330,75 @@ export default function AdminScreen() {
     );
   };
 
+  const submitPointsAdjustment = async () => {
+    if (!pointsModal || !supabase) return;
+    const parsedDelta = parseInt(pointsDelta, 10);
+    if (!Number.isFinite(parsedDelta)) {
+      setPointsError('Enter a valid whole number for the adjustment.');
+      return;
+    }
+    if (pointsReason.trim().length < 3) {
+      setPointsError('Please enter a short reason for this adjustment.');
+      return;
+    }
+
+    const baseUrl = getRideStatusUrlOrNull("dummy")?.split("/rides/")[0];
+    if (!baseUrl) {
+      setPointsError('Backend is not configured right now.');
+      return;
+    }
+
+    setPointsSubmitting(true);
+    setPointsError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) {
+        throw new Error('Missing auth session');
+      }
+
+      const response = await fetch(`${baseUrl}/admin/points/adjust`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          user_id: pointsModal.userId,
+          delta: parsedDelta,
+          reason: pointsReason.trim(),
+        }),
+      });
+
+      let detail = 'Request failed';
+      try {
+        const body = await response.json() as { detail?: string; new_total?: number };
+        if (!response.ok) {
+          detail = body.detail ?? detail;
+          throw new Error(detail);
+        }
+
+        Alert.alert(
+          'Points adjusted',
+          `${pointsModal.displayName} now has ${body.new_total ?? 'an updated'} Kind Points balance.`
+        );
+      } catch (error) {
+        if (!response.ok) {
+          throw error;
+        }
+      }
+
+      setPointsModal(null);
+      setPointsDelta("");
+      setPointsReason("");
+      setPointsError(null);
+    } catch (error) {
+      setPointsError(error instanceof Error ? error.message : 'Could not adjust points.');
+    } finally {
+      setPointsSubmitting(false);
+    }
+  };
+
   // ── Hub actions ──────────────────────────────────────────────────────────
 
   const approveHub = (hub: HubRow) => {
@@ -464,16 +541,30 @@ export default function AdminScreen() {
           Last seen {new Date(item.updated_at).toLocaleString()}
         </Text>
       </View>
-      {item.is_available && (
-        <View style={styles.actionRow}>
+      <View style={styles.actionRow}>
+        <Pressable
+          style={[styles.actionBtn, styles.btnAdjust]}
+          onPress={() => {
+            setPointsModal({
+              userId: item.user_id,
+              displayName: item.display_name ?? item.user_id.slice(0, 8),
+            });
+            setPointsDelta("");
+            setPointsReason("");
+            setPointsError(null);
+          }}
+        >
+          <Text style={styles.actionBtnText}>Adjust Points</Text>
+        </Pressable>
+        {item.is_available && (
           <Pressable
             style={[styles.actionBtn, styles.btnSuspend]}
             onPress={() => suspendDriver(item.user_id, item.display_name)}
           >
             <Text style={styles.actionBtnText}>Suspend</Text>
           </Pressable>
-        </View>
-      )}
+        )}
+      </View>
     </View>
   );
 
@@ -735,6 +826,76 @@ export default function AdminScreen() {
         />
       )}
 
+      <Modal
+        visible={pointsModal !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (pointsSubmitting) return;
+          setPointsModal(null);
+          setPointsError(null);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Adjust Kind Points</Text>
+            <Text style={styles.modalSubtitle}>
+              {pointsModal ? `Driver: ${pointsModal.displayName}` : ''}
+            </Text>
+
+            <Text style={styles.modalLabel}>Delta</Text>
+            <TextInput
+              value={pointsDelta}
+              onChangeText={setPointsDelta}
+              placeholder="e.g. -10 or 50"
+              placeholderTextColor="#94a3b8"
+              keyboardType="numbers-and-punctuation"
+              style={styles.modalInput}
+              editable={!pointsSubmitting}
+            />
+
+            <Text style={styles.modalLabel}>Reason</Text>
+            <TextInput
+              value={pointsReason}
+              onChangeText={setPointsReason}
+              placeholder="Why is this adjustment needed?"
+              placeholderTextColor="#94a3b8"
+              style={[styles.modalInput, styles.modalInputMultiline]}
+              multiline
+              editable={!pointsSubmitting}
+            />
+
+            {pointsError ? (
+              <Text style={styles.modalError}>{pointsError}</Text>
+            ) : null}
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnSecondary]}
+                onPress={() => {
+                  setPointsModal(null);
+                  setPointsDelta("");
+                  setPointsReason("");
+                  setPointsError(null);
+                }}
+                disabled={pointsSubmitting}
+              >
+                <Text style={styles.modalBtnSecondaryText}>Close</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnPrimary, pointsSubmitting && styles.modalBtnDisabled]}
+                onPress={() => { void submitPointsAdjustment(); }}
+                disabled={pointsSubmitting}
+              >
+                <Text style={styles.modalBtnPrimaryText}>
+                  {pointsSubmitting ? 'Submitting...' : 'Submit'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -819,6 +980,7 @@ const styles = StyleSheet.create({
   actionBtn: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 6 },
   btnAck: { backgroundColor: '#eab308' },
   btnResolve: { backgroundColor: '#10b981' },
+  btnAdjust: { backgroundColor: '#0d9488' },
   btnSuspend: { backgroundColor: '#ef4444' },
   actionBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
 
@@ -848,4 +1010,87 @@ const styles = StyleSheet.create({
   questionText: { fontSize: 15, fontWeight: '600', color: '#0f172a', lineHeight: 22, marginBottom: 10 },
   questionMeta: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 4 },
   questionEmail: { fontSize: 12, color: '#0d9488', fontWeight: '600' },
+
+  // Points modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    gap: 10,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: '#475569',
+    marginBottom: 4,
+  },
+  modalLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: '#0f172a',
+    backgroundColor: '#f8fafc',
+  },
+  modalInputMultiline: {
+    minHeight: 92,
+    textAlignVertical: 'top',
+  },
+  modalError: {
+    color: '#dc2626',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 4,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 8,
+  },
+  modalBtn: {
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalBtnPrimary: {
+    backgroundColor: '#0d9488',
+  },
+  modalBtnSecondary: {
+    backgroundColor: '#1e293b',
+  },
+  modalBtnPrimaryText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  modalBtnSecondaryText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  modalBtnDisabled: {
+    opacity: 0.7,
+  },
 });

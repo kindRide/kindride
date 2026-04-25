@@ -57,7 +57,7 @@ Use a real Supabase **session access token** in the app (`Authorization: Bearer 
 | `GET` | `/matching/search` | Live matching (PostGIS RPC or `driver_presence` + haversine); optional `urgent=1`; **Match Score** sort (env `MATCH_ALPHA`, `MATCH_BETA`, `MATCH_GAMMA`) |
 | `POST` | `/rides/start-search` | Passenger: upsert ride row in `searching` (requires JWT + applied `rides_lifecycle.sql`) |
 | `POST` | `/rides/request-driver` | Passenger: target a driver UUID → `requested` only if they pass the same **eligibility** rules as `GET /matching/search` (available presence, fresh GPS, within 5 km pickup radius, heading matches trip corridor); then **one** Expo push to that driver’s `push_tokens` row (not a broadcast). Override with `KINDRIDE_RELAX_DRIVER_REQUEST_ELIGIBILITY=true` for local debugging. |
-| `POST` | `/rides/respond` | Driver: accept (→ `accepted` + `driver_id`) or decline (→ `searching`) |
+| `POST` | `/rides/respond` | Driver: accept (→ `accepted` + `driver_id`) or decline (→ `declined`) |
 | `GET` | `/rides/status/{ride_id}` | Passenger, pending driver, or assigned driver: poll state |
 | `POST` | `/journeys/register` | Start multi-leg journey |
 | `POST` | `/journeys/complete` | End whole journey |
@@ -71,6 +71,17 @@ Use a real Supabase **session access token** in the app (`Authorization: Bearer 
 | `POST` | `/notifications/send` | Send push notification |
 | `GET` | `/notifications/health` | Check notification service status |
 | `POST` | `/sos` | Passenger SOS: persist alert + return contact payload |
+
+Ride lifecycle transition contract: `docs/RIDE_LIFECYCLE_CONTRACT.md`
+
+## Lifecycle Contract Tests
+
+Run the lifecycle conflict-message regression tests:
+
+```bash
+cd backend
+python -m unittest tests.test_ride_transition_contract -v
+```
 
 ### Quick `curl` (auth + service routes)
 
