@@ -131,6 +131,10 @@ export default function AdminScreen() {
   const [hubs, setHubs] = useState<HubRow[]>([]);
   const [hubsRefreshing, setHubsRefreshing] = useState(false);
   const [founderId, setFounderId] = useState<string | null>(null);
+  const [domainModal, setDomainModal] = useState<{ hubId: string; hubName: string } | null>(null);
+  const [domainInput, setDomainInput] = useState('');
+  const [domainSubmitting, setDomainSubmitting] = useState(false);
+  const [domainError, setDomainError] = useState<string | null>(null);
 
   // Questions state
   const [questions, setQuestions] = useState<QuestionRow[]>([]);
@@ -396,6 +400,43 @@ export default function AdminScreen() {
       setPointsError(error instanceof Error ? error.message : 'Could not adjust points.');
     } finally {
       setPointsSubmitting(false);
+    }
+  };
+
+  // ── Hub domain actions ───────────────────────────────────────────────────
+
+  const submitDomain = async () => {
+    if (!domainModal || !supabase) return;
+    const domain = domainInput.trim().toLowerCase().replace(/^@/, '');
+    if (!domain || !domain.includes('.')) {
+      setDomainError('Enter a valid domain, e.g. umd.edu');
+      return;
+    }
+    setDomainSubmitting(true);
+    setDomainError(null);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) throw new Error('Not signed in.');
+      const { getRideStatusUrlOrNull } = await import('@/lib/backend-api-urls');
+      const baseUrl = getRideStatusUrlOrNull('dummy')?.split('/rides/')[0];
+      if (!baseUrl) throw new Error('Backend not configured.');
+      const response = await fetch(`${baseUrl}/admin/hubs/${domainModal.hubId}/domain`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ domain }),
+      });
+      if (!response.ok) {
+        const body = await response.json() as { detail?: string };
+        throw new Error(body.detail ?? 'Failed to add domain.');
+      }
+      Alert.alert('Domain added', `${domain} will auto-join members to ${domainModal.hubName} on sign-up.`);
+      setDomainModal(null);
+      setDomainInput('');
+    } catch (e) {
+      setDomainError(e instanceof Error ? e.message : 'Unknown error.');
+    } finally {
+      setDomainSubmitting(false);
     }
   };
 
@@ -776,6 +817,12 @@ export default function AdminScreen() {
                     </Pressable>
                   )}
                   <Pressable
+                    style={[styles.actionBtn, { backgroundColor: '#0d9488' }]}
+                    onPress={() => { setDomainModal({ hubId: item.id, hubName: item.name }); setDomainInput(''); setDomainError(null); }}
+                  >
+                    <Text style={styles.actionBtnText}>+ Domain</Text>
+                  </Pressable>
+                  <Pressable
                     style={[styles.actionBtn, styles.btnSuspend]}
                     onPress={() => rejectHub(item)}
                   >
@@ -889,6 +936,54 @@ export default function AdminScreen() {
               >
                 <Text style={styles.modalBtnPrimaryText}>
                   {pointsSubmitting ? 'Submitting...' : 'Submit'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Domain allowlist modal ── */}
+      <Modal
+        visible={domainModal !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => { setDomainModal(null); setDomainInput(''); setDomainError(null); }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Add Email Domain</Text>
+            <Text style={styles.modalSubtitle}>
+              {domainModal ? `Hub: ${domainModal.hubName}` : ''}
+            </Text>
+            <Text style={styles.modalLabel}>Domain</Text>
+            <TextInput
+              value={domainInput}
+              onChangeText={setDomainInput}
+              placeholder="e.g. umd.edu"
+              placeholderTextColor="#94a3b8"
+              autoCapitalize="none"
+              keyboardType="url"
+              style={styles.modalInput}
+            />
+            <Text style={styles.modalHint}>
+              Anyone signing up with this email domain will auto-join the hub.
+            </Text>
+            {domainError ? <Text style={styles.modalError}>{domainError}</Text> : null}
+            <View style={styles.modalActions}>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnSecondary]}
+                onPress={() => { setDomainModal(null); setDomainInput(''); setDomainError(null); }}
+              >
+                <Text style={styles.modalBtnSecondaryText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnPrimary, domainSubmitting && styles.modalBtnDisabled]}
+                onPress={() => { void submitDomain(); }}
+                disabled={domainSubmitting}
+              >
+                <Text style={styles.modalBtnPrimaryText}>
+                  {domainSubmitting ? 'Adding...' : 'Add Domain'}
                 </Text>
               </Pressable>
             </View>
@@ -1054,6 +1149,12 @@ const styles = StyleSheet.create({
   modalInputMultiline: {
     minHeight: 92,
     textAlignVertical: 'top',
+  },
+  modalHint: {
+    color: '#64748b',
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 12,
   },
   modalError: {
     color: '#dc2626',
