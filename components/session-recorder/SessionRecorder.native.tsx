@@ -89,36 +89,54 @@ export default function SessionRecorder({ isActive, rideId }: Props) {
     }
   }, [rideId]);
 
+  // Periodic 10-second safety snapshots at randomised intervals (3–8 min).
+  // Randomisation prevents bad actors predicting when recording occurs.
   useEffect(() => {
-    let isMounted = true;
+    if (!isActive || !permission?.granted || !micPermission?.granted) return;
+    if (!cameraReady && !previewUnavailable) return;
 
-    const startRecording = async () => {
-      if (!isActive || !permission?.granted || !micPermission?.granted) return;
-      if (!cameraReady && !previewUnavailable) return;
-      if (!cameraRef.current || isRecordingRef.current) return;
-      
+    let isMounted = true;
+    let intervalTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const takeSnapshot = async () => {
+      if (!isMounted || !cameraRef.current || isRecordingRef.current) return;
       try {
         isRecordingRef.current = true;
-        // Record video (maxes out or runs until component unmounts and stopRecording is called)
+        // Stop after 10 seconds automatically
+        const stopTimer = setTimeout(() => {
+          if (isRecordingRef.current && cameraRef.current) {
+            cameraRef.current.stopRecording();
+          }
+        }, 10_000);
+
         const video = await cameraRef.current.recordAsync();
+        clearTimeout(stopTimer);
+
         if (video && isMounted) {
-          await uploadVideo(video.uri);
+          uploadVideo(video.uri).catch(() => {});
         }
       } catch (e) {
-        console.warn("Recording failed (non-critical):", e);
+        console.warn("Snapshot failed (non-critical):", e);
       } finally {
         isRecordingRef.current = false;
+        if (isMounted) scheduleNext();
       }
     };
 
-    const timer = setTimeout(startRecording, 1000);
-    const currentCamera = cameraRef.current;
+    const scheduleNext = () => {
+      // Random interval: 3–8 minutes (180_000–480_000 ms)
+      const delay = 180_000 + Math.random() * 300_000;
+      intervalTimer = setTimeout(takeSnapshot, delay);
+    };
+
+    // First snapshot after a short delay to let camera settle
+    intervalTimer = setTimeout(takeSnapshot, 3_000);
 
     return () => {
       isMounted = false;
-      clearTimeout(timer);
-      if (isRecordingRef.current && currentCamera) {
-        currentCamera.stopRecording();
+      if (intervalTimer) clearTimeout(intervalTimer);
+      if (isRecordingRef.current && cameraRef.current) {
+        cameraRef.current.stopRecording();
       }
     };
   }, [isActive, permission?.granted, micPermission?.granted, cameraReady, previewUnavailable, uploadVideo]);

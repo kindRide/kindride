@@ -241,9 +241,9 @@ export default function RideRequestScreen() {
         setMatchingFeed("loading");
       }
 
-      const accessToken = supabase
-        ? (await supabase.auth.getSession()).data.session?.access_token
-        : undefined;
+      const sessionResult = supabase ? await supabase.auth.getSession() : null;
+      const accessToken = sessionResult?.data.session?.access_token;
+      const selfUserId = sessionResult?.data.session?.user?.id ?? null;
         
       const sess = emptySearchSessionRef.current;
       const elapsedMinutes = sess ? (Date.now() - sess.startedAt) / 60000 : 0;
@@ -315,7 +315,11 @@ export default function RideRequestScreen() {
           }
           return;
         }
-        setDrivers(parsed);
+        // Never show the current user as a driver on their own passenger screen
+        const filteredParsed = selfUserId
+          ? parsed.filter((d) => d.id !== selfUserId)
+          : parsed;
+        setDrivers(filteredParsed);
         setMatchingFeedError(null);
         setMatchingFeed("live");
         const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });

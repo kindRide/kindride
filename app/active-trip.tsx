@@ -114,6 +114,7 @@ export default function ActiveTripScreen() {
   const completeInFlightRef = useRef(false);
   const cancelInFlightRef = useRef(false);
   const shareInFlightRef = useRef(false);
+  const ratingNavigatedRef = useRef(false);
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [liveDriverLocation, setLiveDriverLocation] = useState<LatLng | null>(null);
@@ -205,6 +206,27 @@ export default function ActiveTripScreen() {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [isSharing, setIsSharing] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
+
+  // Detect when the OTHER party ends the trip remotely (status → "completed" without us pressing End Trip)
+  useEffect(() => {
+    if (rideStatus !== "completed") return;
+    if (completeInFlightRef.current) return;
+    if (ratingNavigatedRef.current) return;
+    ratingNavigatedRef.current = true;
+    const isDriverFlow = !driverId;
+    if (isDriverFlow) {
+      const effectivePassengerId = ridePassengerId ?? passengerId ?? "";
+      router.push({
+        pathname: "/rate-passenger",
+        params: { rideId, passengerId: effectivePassengerId, distanceMiles: "0", wasZeroDetour: "false" },
+      });
+    } else {
+      router.push({
+        pathname: "/post-trip-rating",
+        params: { rideId, driverName, driverId, distanceMiles: "0", wasZeroDetour: "false" },
+      });
+    }
+  }, [rideStatus, driverId, driverName, rideId, passengerId, ridePassengerId, router]);
 
   const ridesCompleteEndpoint = getRidesCompleteUrlOrNull();
   const fetchRideStatusOnce = useCallback(async () => {

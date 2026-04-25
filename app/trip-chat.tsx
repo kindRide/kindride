@@ -205,6 +205,21 @@ export default function TripChatScreen() {
     });
     if (!error) {
       setDraft("");
+      // Fire-and-forget push notification to the other party
+      supabase.auth.getSession().then(({ data }) => {
+        const token = data.session?.access_token;
+        if (!token) return;
+        // Derive base URL from lib — same pattern used elsewhere in the app
+        import("@/lib/backend-api-urls").then(({ getRideStatusUrlOrNull }) => {
+          const baseUrl = getRideStatusUrlOrNull("dummy")?.split("/rides/")[0];
+          if (!baseUrl) return;
+          fetch(`${baseUrl}/chat/notify`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ rideId, body }),
+          }).catch(() => {}); // non-critical — message was already sent
+        });
+      });
     }
     setSending(false);
   };

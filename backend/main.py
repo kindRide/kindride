@@ -5120,6 +5120,76 @@ def _maybe_award_referral_bonus_on_first_ride(
         logger.warning("referral bonus check failed (non-fatal): %s", str(exc))
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Chat push notification
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ChatNotifyRequest(BaseModel):
+    rideId: str
+    body: str = Field(max_length=200)
+
+@app.post("/chat/notify")
+@(_limiter.limit("60/minute") if _SLOWAPI_AVAILABLE else lambda f: f)
+def chat_notify(
+    request: Request,
+    payload: ChatNotifyRequest,
+    authorization: str | None = Header(default=None),
+):
+    """
+    Called after a chat message is sent. Looks up the other party for the ride
+    and sends them a push notification so they don't need to have the chat screen open.
+    """
+    _require_config()
+    sender_id = _verify_user_bearer_token(authorization)
+
+    with httpx.Client() as client:
+        # Fetch ride to find driver_id and passenger_id
+        r = client.get(
+            _rest_url("/rides"),
+            params={"id": f"eq.{payload.rideId}", "select": "driver_id,passenger_id", "limit": "1"},
+            headers=_service_headers(),
+            timeout=10.0,
+        )
+        rows = _rest_json_list(r, "chat_notify ride lookup")
+        if not rows:
+            raise HTTPException(status_code=404, detail="Ride not found")
+
+        ride = rows[0]
+        driver_id = ride.get("driver_id")
+        passenger_id = ride.get("passenger_id")
+
+        # Send to the OTHER party
+        recipient_id = passenger_id if sender_id == driver_id else driver_id
+        if not recipient_id:
+            return {"status": "no_recipient"}
+
+        pt = client.get(
+            _rest_url("/push_tokens"),
+            params={"user_id": f"eq.{recipient_id}", "select": "push_token", "limit": "1"},
+            headers=_service_headers(),
+            timeout=10.0,
+        )
+        pt_rows = _rest_json_list(pt, "chat_notify push_token") if pt.status_code == 200 else []
+        if not pt_rows:
+            return {"status": "no_push_token"}
+
+        token = pt_rows[0].get("push_token")
+        if not token:
+            return {"status": "no_push_token"}
+
+        preview = payload.body[:80] + ("…" if len(payload.body) > 80 else "")
+        _send_expo_push([{
+            "to": token,
+            "title": "New message",
+            "body": preview,
+            "data": {"screen": "trip-chat", "rideId": payload.rideId},
+            "sound": "default",
+            "priority": "high",
+        }])
+
+    return {"status": "sent"}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
