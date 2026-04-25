@@ -151,6 +151,11 @@ STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
 STRIPE_TIP_WEBHOOK_SECRET = os.getenv("STRIPE_TIP_WEBHOOK_SECRET", "").strip()
 STRIPE_CONNECT_RETURN_URL = os.getenv("STRIPE_CONNECT_RETURN_URL", "kindride://connect/return").strip()
 KINDRIDE_FOUNDER_USER_ID = os.getenv("KINDRIDE_FOUNDER_USER_ID", "").strip()
+# Comma-separated list of founder UUIDs — all have admin privileges
+_FOUNDER_IDS: set[str] = {
+    uid.strip() for uid in os.getenv("KINDRIDE_FOUNDER_USER_IDS", KINDRIDE_FOUNDER_USER_ID).split(",")
+    if uid.strip()
+}
 try:
     import stripe as _stripe_lib
     _STRIPE_AVAILABLE = bool(STRIPE_SECRET_KEY)
@@ -235,18 +240,6 @@ class AdminPointsAdjustRequest(BaseModel):
     @classmethod
     def normalize_reason(cls, v: str) -> str:
         return v.strip()
-
-
-class AdminHubDomainRequest(BaseModel):
-    domain: str = Field(min_length=3, max_length=255)
-
-    @field_validator("domain")
-    @classmethod
-    def normalize_domain(cls, v: str) -> str:
-        domain = v.strip().lower().lstrip("@")
-        if not domain or "@" in domain or " " in domain or "." not in domain:
-            raise ValueError("Please provide a valid email domain.")
-        return domain
 
 
 def _require_config() -> None:
@@ -420,15 +413,6 @@ def _point_inside_bbox(lat: float | None, lng: float | None, bbox: dict | None, 
     return min_lat <= lat <= max_lat and min_lng <= lng <= max_lng
 
 
-def _decode_user_bearer_token_claims(authorization: str | None) -> dict[str, object]:
-    """
-    Returns the decoded claims from a valid Supabase access JWT.
-    """
-    decoded = _decode_user_bearer_token_claims(authorization)
-
-    return decoded
-
-
 def _verify_user_bearer_token(authorization: str | None) -> str:
     """
     Returns Supabase auth user id (UUID string) from a valid access JWT.
@@ -437,54 +421,55 @@ def _verify_user_bearer_token(authorization: str | None) -> str:
     - HS256 + legacy JWT secret (dashboard → JWT Keys → legacy secret), or
     - RS256 / asymmetric keys (JWT Signing Keys). Those are verified via JWKS.
     """
-    decoded = _decode_user_bearer_token_claims(authorization)
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+
+    decoded: dict | None = None
+
+    if SUPABASE_JWT_SECRET:
+        try:
+            decoded = jwt.decode(
+                token,
+                SUPABASE_JWT_SECRET,
+                algorithms=["HS256"],
+                audience="authenticated",
+            )
+        except jwt.PyJWTError:
+            decoded = None
+
+    if decoded is None and SUPABASE_URL:
+        try:
+            jwks_url = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+            global _JWKS_CLIENT
+            if _JWKS_CLIENT is None:
+                _JWKS_CLIENT = PyJWKClient(jwks_url, cache_keys=True)
+            signing_key = _JWKS_CLIENT.get_signing_key_from_jwt(token)
+            try:
+                decoded = jwt.decode(
+                    token,
+                    signing_key.key,
+                    algorithms=["RS256", "ES256"],
+                    audience="authenticated",
+                    issuer=f"{SUPABASE_URL}/auth/v1",
+                )
+            except jwt.PyJWTError:
+                decoded = jwt.decode(
+                    token,
+                    signing_key.key,
+                    algorithms=["RS256", "ES256"],
+                    audience="authenticated",
+                )
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    if decoded is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     sub = decoded.get("sub")
     if not sub or not isinstance(sub, str):
         raise HTTPException(status_code=401, detail="Token missing user id")
     return sub
-
-
-def _auto_join_hub_by_email_domain(client: httpx.Client, user_id: str, email: str | None) -> list[str]:
-    normalized_email = (email or "").strip().lower()
-    if "@" not in normalized_email:
-        return []
-
-    domain = normalized_email.rsplit("@", 1)[1].strip().lower()
-    if not domain:
-        return []
-
-    lookup = client.get(
-        _rest_url("/hub_domain_allowlist"),
-        params={"domain": f"eq.{domain}", "select": "hub_id"},
-        headers=_service_headers(),
-        timeout=15.0,
-    )
-    if lookup.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"hub domain lookup failed: {lookup.text}")
-
-    rows = _rest_json_list(lookup, "hub_domain_allowlist lookup")
-    joined_hub_ids: list[str] = []
-    seen_hub_ids: set[str] = set()
-
-    for row in rows:
-        hub_id = row.get("hub_id")
-        if not isinstance(hub_id, str) or not hub_id or hub_id in seen_hub_ids:
-            continue
-        seen_hub_ids.add(hub_id)
-
-        upsert = client.post(
-            _rest_url("/hub_members"),
-            params={"on_conflict": "hub_id,user_id"},
-            headers={**_service_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
-            json={"hub_id": hub_id, "user_id": user_id, "is_active": True},
-            timeout=15.0,
-        )
-        if upsert.status_code not in (200, 201, 204):
-            raise HTTPException(status_code=502, detail=f"hub auto-join write failed: {upsert.text}")
-        joined_hub_ids.append(hub_id)
-
-    return joined_hub_ids
 
 
 def _compute_points(rating: int, was_zero_detour: bool, distance_miles: float) -> int:
@@ -3862,8 +3847,7 @@ def admin_points_adjust(
 ):
     _require_config()
     caller_id = _verify_user_bearer_token(authorization)
-    founder_id = KINDRIDE_FOUNDER_USER_ID
-    if not founder_id or caller_id != founder_id:
+    if not _FOUNDER_IDS or caller_id not in _FOUNDER_IDS:
         raise HTTPException(status_code=403, detail="Founder access required")
 
     with httpx.Client() as client:
@@ -3903,39 +3887,6 @@ def admin_points_adjust(
 
     return {"user_id": payload.user_id, "delta": payload.delta, "new_total": new_total}
 
-
-@app.post("/admin/hubs/{hub_id}/domain")
-@(_limiter.limit("20/minute") if _SLOWAPI_AVAILABLE else lambda f: f)
-def admin_add_hub_domain(
-    hub_id: str,
-    request: Request,
-    payload: AdminHubDomainRequest,
-    authorization: str | None = Header(default=None),
-):
-    _require_config()
-    caller_id = _verify_user_bearer_token(authorization)
-    founder_id = KINDRIDE_FOUNDER_USER_ID
-    if not founder_id or caller_id != founder_id:
-        raise HTTPException(status_code=403, detail="Founder access required")
-
-    try:
-        UUID(hub_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid hub id") from exc
-
-    with httpx.Client() as client:
-        r = client.post(
-            _rest_url("/hub_domain_allowlist"),
-            params={"on_conflict": "hub_id,domain"},
-            headers={**_service_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
-            json={"hub_id": hub_id, "domain": payload.domain},
-            timeout=15.0,
-        )
-        if r.status_code not in (200, 201, 204):
-            raise HTTPException(status_code=502, detail=f"hub domain insert failed: {r.text}")
-
-    return {"hub_id": hub_id, "domain": payload.domain}
-
 # Note: SOS and notification endpoints have been moved to isolated routers:
 # - sos_routes.py (POST /sos)
 # - notifications_routes.py (POST /notifications/register-token, /notifications/send, GET /notifications/health)
@@ -3945,6 +3896,75 @@ def admin_add_hub_domain(
 # ─────────────────────────────────────────────────────────────────────────────
 # P2.4b — Hub Onboarding
 # ─────────────────────────────────────────────────────────────────────────────
+
+class HubDomainRequest(BaseModel):
+    domain: str  # e.g. "umd.edu"
+
+
+def _auto_join_hub_by_email_domain(client: httpx.Client, user_id: str, email: str) -> None:
+    """
+    Extracts domain from email, queries hub_domain_allowlist, and auto-joins
+    the user to matching hubs.
+    """
+    if not email or "@" not in email:
+        return
+    domain = email.split("@")[-1].strip().lower()
+    if not domain:
+        return
+
+    r = client.get(
+        _rest_url("/hub_domain_allowlist"),
+        params={"domain": f"eq.{domain}", "select": "hub_id"},
+        headers=_service_headers(),
+        timeout=10.0,
+    )
+    if r.status_code == 200:
+        rows = _rest_json_list(r, "hub_domain_allowlist")
+        for row in rows:
+            hub_id = row.get("hub_id")
+            if hub_id:
+                client.post(
+                    _rest_url("/hub_members"),
+                    headers={**_service_headers(), "Prefer": "resolution=ignore-duplicates,return=minimal"},
+                    json={
+                        "hub_id": str(hub_id),
+                        "user_id": user_id,
+                        "role": "member",
+                        "is_active": True
+                    },
+                    timeout=10.0,
+                )
+
+
+@app.post("/admin/hubs/{hub_id}/domain")
+@(_limiter.limit("20/minute") if _SLOWAPI_AVAILABLE else lambda f: f)
+def admin_hubs_domain(
+    hub_id: str,
+    payload: HubDomainRequest,
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    _require_config()
+    caller_id = _verify_user_bearer_token(authorization)
+    if not _FOUNDER_IDS or caller_id not in _FOUNDER_IDS:
+        raise HTTPException(status_code=403, detail="Founder access required")
+
+    domain = payload.domain.strip().lower()
+    if not domain:
+        raise HTTPException(status_code=400, detail="Domain is required")
+
+    with httpx.Client() as client:
+        r = client.post(
+            _rest_url("/hub_domain_allowlist"),
+            headers={**_service_headers(), "Prefer": "resolution=ignore-duplicates,return=minimal"},
+            json={"hub_id": hub_id, "domain": domain},
+            timeout=10.0,
+        )
+        if r.status_code not in (200, 201):
+            raise HTTPException(status_code=502, detail=f"Insert hub_domain_allowlist failed: {r.text}")
+
+    return {"hub_id": hub_id, "domain": domain}
+
 
 class HubJoinRequest(BaseModel):
     hubCode: str = Field(min_length=3, max_length=32)
@@ -3960,15 +3980,23 @@ def hubs_join(
     the driver with that hub in driver_presence.hub_id.
     """
     _require_config()
-    claims = _decode_user_bearer_token_claims(authorization)
-    uid = claims.get("sub")
-    if not uid or not isinstance(uid, str):
-        raise HTTPException(status_code=401, detail="Token missing user id")
-    email_claim = claims.get("email")
-    user_email = email_claim.strip().lower() if isinstance(email_claim, str) else None
+    uid = _verify_user_bearer_token(authorization)
 
     with httpx.Client() as client:
-        _auto_join_hub_by_email_domain(client, uid, user_email)
+        # 0. Auto-join by email domain pre-check
+        try:
+            r_prof = client.get(
+                _rest_url("/profiles"),
+                params={"id": f"eq.{uid}", "select": "email", "limit": "1"},
+                headers=_service_headers(),
+                timeout=10.0,
+            )
+            if r_prof.status_code == 200:
+                p_rows = _rest_json_list(r_prof, "profiles email lookup")
+                if p_rows and p_rows[0].get("email"):
+                    _auto_join_hub_by_email_domain(client, uid, p_rows[0]["email"])
+        except Exception as e:
+            logger.warning("_auto_join_hub_by_email_domain wrapper failed: %s", e)
 
         # 1. Resolve hub by code.
         r = client.get(
