@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Pressable,
   StyleSheet,
   Text,
@@ -11,6 +12,19 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { supabase } from "@/lib/supabase";
+
+const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? "";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type JoinState =
+  | "loading"
+  | "invalid_token"   // token expired / exhausted / not found
+  | "not_found"       // hub slug not found (slugOnly flow)
+  | "already_member"
+  | "ready"
+  | "joining"
+  | "done";
 
 type HubInfo = {
   id: string;
@@ -22,7 +36,15 @@ type HubInfo = {
   access_type: "open" | "closed" | "hybrid";
 };
 
-type JoinState = "loading" | "not_found" | "already_member" | "pending" | "ready" | "joining" | "done";
+type UserIdentity = {
+  user_id: string;
+  full_name: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  email: string | null;
+};
+
+// ── Constants ─────────────────────────────────────────────────────────────────
 
 const HUB_TYPE_LABEL: Record<string, string> = {
   university: "University",
@@ -38,47 +60,110 @@ const HUB_TYPE_ICON: Record<string, string> = {
   corporate: "🏢",
 };
 
-const ACCESS_META: Record<string, { icon: string; label: string; color: string; bg: string; description: string }> = {
-  open: {
-    icon: "🌐",
-    label: "Open Hub",
-    color: "#059669",
-    bg: "#f0fdf4",
-    description: "Anyone with this link can join instantly. No approval needed.",
-  },
-  closed: {
-    icon: "🔒",
-    label: "Closed Hub",
-    color: "#d97706",
-    bg: "#fffbeb",
-    description: "Membership is by approval only. Your request will be reviewed by the hub admin.",
-  },
-  hybrid: {
-    icon: "⚡",
-    label: "Hybrid Hub",
-    color: "#0284c7",
-    bg: "#f0f9ff",
-    description: "Open to join, but Hub-priority matching is enabled after admin verifies your membership.",
-  },
-};
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function displayName(identity: UserIdentity): string {
+  return (
+    identity.full_name?.trim() ||
+    identity.display_name?.trim() ||
+    identity.email?.split("@")[0] ||
+    "You"
+  );
+}
+
+function avatarInitial(identity: UserIdentity): string {
+  const name = displayName(identity);
+  return name.charAt(0).toUpperCase();
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function JoinHubScreen() {
-  const { slug } = useLocalSearchParams<{ slug: string }>();
+  const { slug, token } = useLocalSearchParams<{ slug: string; token?: string }>();
   const router = useRouter();
 
   const [state, setState] = useState<JoinState>("loading");
   const [hub, setHub] = useState<HubInfo | null>(null);
   const [memberCount, setMemberCount] = useState<number | null>(null);
+  const [identity, setIdentity] = useState<UserIdentity | null>(null);
+  const [invalidReason, setInvalidReason] = useState<string>("");
 
   useEffect(() => {
     if (!slug) { setState("not_found"); return; }
-    loadHub(slug);
-  }, [slug]);
+    if (token) {
+      loadViaToken(token);
+    } else {
+      loadViaSlug(slug);
+    }
+  }, [slug, token]);
 
-  async function loadHub(hubSlug: string) {
+  // ── Token-based flow ────────────────────────────────────────────────────────
+
+  async function loadViaToken(inviteToken: string) {
     if (!supabase) { setState("not_found"); return; }
     try {
-      // Fetch hub (RLS: only verified + approved hubs are readable)
+      const { data: { session } } = await supabase.auth.getSession();
+      const authHeader = session ? `Bearer ${session.access_token}` : undefined;
+
+      const url = `${API_BASE}/hubs/invite/${encodeURIComponent(inviteToken)}`;
+      const res = await fetch(url, {
+        headers: authHeader ? { Authorization: authHeader } : {},
+      });
+
+      if (!res.ok) { setState("not_found"); return; }
+      const data = await res.json();
+
+      if (!data.valid) {
+        setInvalidReason(data.reason ?? "This invite is no longer valid.");
+        setState("invalid_token");
+        return;
+      }
+
+      // Build hub object from token validation response
+      setHub({
+        id: data.hub_id,
+        name: data.hub_name,
+        type: data.hub_type,
+        slug: data.hub_slug,
+        logo_url: null,
+        subscription_tier: "basic",
+        access_type: "open", // token bypass — treat as open
+      });
+
+      // Member count
+      const { count } = await supabase
+        .from("hub_members")
+        .select("user_id", { count: "exact", head: true })
+        .eq("hub_id", data.hub_id)
+        .eq("is_active", true);
+      setMemberCount(count ?? null);
+
+      if (data.already_member) {
+        setState("already_member");
+        return;
+      }
+
+      if (data.user_id) {
+        setIdentity({
+          user_id: data.user_id,
+          full_name: data.user_full_name ?? null,
+          display_name: data.user_display_name ?? null,
+          avatar_url: data.user_avatar_url ?? null,
+          email: data.user_email ?? null,
+        });
+      }
+
+      setState("ready");
+    } catch {
+      setState("not_found");
+    }
+  }
+
+  // ── Slug-only flow (open hubs, no token) ────────────────────────────────────
+
+  async function loadViaSlug(hubSlug: string) {
+    if (!supabase) { setState("not_found"); return; }
+    try {
       const { data: hubData, error: hubErr } = await supabase
         .from("hubs")
         .select("id, name, type, slug, logo_url, subscription_tier, access_type")
@@ -88,7 +173,6 @@ export default function JoinHubScreen() {
       if (hubErr || !hubData) { setState("not_found"); return; }
       setHub(hubData as HubInfo);
 
-      // Member count
       const { count } = await supabase
         .from("hub_members")
         .select("user_id", { count: "exact", head: true })
@@ -96,7 +180,6 @@ export default function JoinHubScreen() {
         .eq("is_active", true);
       setMemberCount(count ?? null);
 
-      // Check if current user is already a member or has a pending request
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         const { data: existing } = await supabase
@@ -106,14 +189,23 @@ export default function JoinHubScreen() {
           .eq("user_id", session.user.id)
           .eq("is_active", true)
           .maybeSingle();
-        if (existing) {
-          if ((existing as { status?: string }).status === "pending") {
-            setState("pending");
-          } else {
-            setState("already_member");
-          }
-          return;
-        }
+
+        if (existing) { setState("already_member"); return; }
+
+        // Load user identity for display
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("full_name, display_name, avatar_url")
+          .eq("id", session.user.id)
+          .maybeSingle();
+
+        setIdentity({
+          user_id: session.user.id,
+          full_name: (profile as { full_name?: string } | null)?.full_name ?? null,
+          display_name: (profile as { display_name?: string } | null)?.display_name ?? null,
+          avatar_url: (profile as { avatar_url?: string } | null)?.avatar_url ?? null,
+          email: session.user.email ?? null,
+        });
       }
 
       setState("ready");
@@ -122,9 +214,12 @@ export default function JoinHubScreen() {
     }
   }
 
+  // ── Join action ─────────────────────────────────────────────────────────────
+
   async function handleJoin() {
     if (!supabase || !hub) return;
     setState("joining");
+
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
@@ -135,10 +230,27 @@ export default function JoinHubScreen() {
         return;
       }
 
-      // Closed hubs: status = pending (awaits admin approval)
-      // Open and hybrid hubs: status = active immediately
-      const memberStatus = hub.access_type === "closed" ? "pending" : "active";
+      if (token) {
+        // Token flow — backend validates + consumes atomically
+        const res = await fetch(
+          `${API_BASE}/hubs/invite/${encodeURIComponent(token)}/join`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          },
+        );
+        const data = await res.json();
+        if (!res.ok) {
+          Alert.alert("Could not join", data.detail ?? "Please try again.");
+          setState("ready");
+          return;
+        }
+        setState(data.status === "already_member" ? "already_member" : "done");
+        return;
+      }
 
+      // Slug-only flow — direct Supabase insert
+      const memberStatus = hub.access_type === "closed" ? "pending" : "active";
       const { error } = await supabase.from("hub_members").insert({
         hub_id: hub.id,
         user_id: session.user.id,
@@ -147,21 +259,21 @@ export default function JoinHubScreen() {
       });
 
       if (error) {
-        if (error.code === "23505") {
-          setState("already_member");
-          return;
-        }
+        if (error.code === "23505") { setState("already_member"); return; }
         throw error;
       }
-
-      setState(memberStatus === "pending" ? "pending" : "done");
+      setState("done");
     } catch {
       Alert.alert("Error", "Could not join hub. Please try again.");
       setState("ready");
     }
   }
 
-  // ── Loading ────────────────────────────────────────────────────────────────
+  // ── Render helpers ───────────────────────────────────────────────────────────
+
+  const typeIcon  = HUB_TYPE_ICON[hub?.type ?? ""]  ?? "🏘️";
+  const typeLabel = HUB_TYPE_LABEL[hub?.type ?? ""] ?? hub?.type ?? "";
+
   if (state === "loading") {
     return (
       <View style={styles.center}>
@@ -170,7 +282,6 @@ export default function JoinHubScreen() {
     );
   }
 
-  // ── Not found ─────────────────────────────────────────────────────────────
   if (state === "not_found") {
     return (
       <SafeAreaView style={styles.root} edges={["top"]}>
@@ -188,46 +299,29 @@ export default function JoinHubScreen() {
     );
   }
 
-  const typeIcon = HUB_TYPE_ICON[hub?.type ?? ""] ?? "🏘️";
-  const typeLabel = HUB_TYPE_LABEL[hub?.type ?? ""] ?? hub?.type ?? "";
-
-  // ── Pending approval ──────────────────────────────────────────────────────
-  if (state === "pending") {
+  if (state === "invalid_token") {
     return (
       <SafeAreaView style={styles.root} edges={["top"]}>
-        <LinearGradient colors={["#0c1f3f", "#0e4a6e", "#0a5c54"]} style={styles.hero}>
-          <Text style={styles.heroIcon}>{typeIcon}</Text>
-          <Text style={styles.heroTitle}>{hub?.name}</Text>
-          <Text style={styles.heroSub}>{typeLabel} · Closed Hub</Text>
-        </LinearGradient>
-        <View style={styles.doneCard}>
-          <Text style={styles.doneIcon}>⏳</Text>
-          <Text style={styles.doneTitle}>Request sent</Text>
-          <Text style={styles.doneBody}>
-            {hub?.name} is a closed hub. Your request has been sent to the hub admin for approval.
-            You'll be notified once it's reviewed.
-          </Text>
-          <Pressable style={styles.primaryBtn} onPress={() => router.replace("/(tabs)")}>
-            <Text style={styles.primaryBtnText}>Go to KindRide</Text>
+        <View style={styles.center}>
+          <Text style={styles.notFoundIcon}>🔒</Text>
+          <Text style={styles.notFoundTitle}>Invite unavailable</Text>
+          <Text style={styles.notFoundBody}>{invalidReason}</Text>
+          <Pressable style={styles.backBtn} onPress={() => router.replace("/(tabs)")}>
+            <Text style={styles.backBtnText}>Go home</Text>
           </Pressable>
         </View>
       </SafeAreaView>
     );
   }
 
-  // ── Done / already member ─────────────────────────────────────────────────
   if (state === "done" || state === "already_member") {
     return (
       <SafeAreaView style={styles.root} edges={["top"]}>
-        <LinearGradient
-          colors={["#0c1f3f", "#0e4a6e", "#0a5c54"]}
-          style={styles.hero}
-        >
+        <LinearGradient colors={["#0c1f3f", "#0e4a6e", "#0a5c54"]} style={styles.hero}>
           <Text style={styles.heroIcon}>{typeIcon}</Text>
           <Text style={styles.heroTitle}>{hub?.name}</Text>
           <Text style={styles.heroSub}>{typeLabel} · KindRide Hub</Text>
         </LinearGradient>
-
         <View style={styles.doneCard}>
           <Text style={styles.doneIcon}>{state === "done" ? "🎉" : "✅"}</Text>
           <Text style={styles.doneTitle}>
@@ -238,10 +332,7 @@ export default function JoinHubScreen() {
               ? "You're now part of this hub. Hub drivers will be prioritized when you request a ride."
               : "You joined this hub earlier. Hub drivers are already prioritized for your rides."}
           </Text>
-          <Pressable
-            style={styles.primaryBtn}
-            onPress={() => router.replace("/(tabs)")}
-          >
+          <Pressable style={styles.primaryBtn} onPress={() => router.replace("/(tabs)")}>
             <Text style={styles.primaryBtnText}>Go to KindRide</Text>
           </Pressable>
         </View>
@@ -249,20 +340,53 @@ export default function JoinHubScreen() {
     );
   }
 
-  // ── Ready to join ─────────────────────────────────────────────────────────
+  // ── Ready to join ───────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
-      <LinearGradient
-        colors={["#0c1f3f", "#0e4a6e", "#0a5c54"]}
-        style={styles.hero}
-      >
+      <LinearGradient colors={["#0c1f3f", "#0e4a6e", "#0a5c54"]} style={styles.hero}>
         <Text style={styles.heroIcon}>{typeIcon}</Text>
         <Text style={styles.heroTitle}>{hub?.name}</Text>
         <Text style={styles.heroSub}>{typeLabel} · KindRide Hub</Text>
       </LinearGradient>
 
       <View style={styles.content}>
-        {/* Info card */}
+
+        {/* ── Who is joining ── */}
+        {identity ? (
+          <View style={styles.identityCard}>
+            <Text style={styles.identityLabel}>Joining as</Text>
+            <View style={styles.identityRow}>
+              {identity.avatar_url ? (
+                <Image source={{ uri: identity.avatar_url }} style={styles.avatarImg} />
+              ) : (
+                <LinearGradient
+                  colors={["#0d9488", "#0284c7"]}
+                  style={styles.avatarGradient}
+                >
+                  <Text style={styles.avatarInitial}>{avatarInitial(identity)}</Text>
+                </LinearGradient>
+              )}
+              <View style={styles.identityTextBlock}>
+                <Text style={styles.identityName}>{displayName(identity)}</Text>
+                {identity.email ? (
+                  <Text style={styles.identityEmail}>{identity.email}</Text>
+                ) : null}
+              </View>
+              <View style={styles.verifiedBadge}>
+                <Text style={styles.verifiedBadgeText}>✓ Verified</Text>
+              </View>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.identityCard}>
+            <Text style={styles.identityLabel}>Not signed in</Text>
+            <Text style={styles.identityEmail}>
+              You'll need to sign in before you can join.
+            </Text>
+          </View>
+        )}
+
+        {/* ── Hub stats ── */}
         <View style={styles.infoCard}>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Hub type</Text>
@@ -275,30 +399,25 @@ export default function JoinHubScreen() {
               {memberCount != null ? `${memberCount} active` : "—"}
             </Text>
           </View>
-          <View style={styles.infoDivider} />
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Access</Text>
-            <View style={[styles.accessBadge, { backgroundColor: ACCESS_META[hub?.access_type ?? "open"].bg }]}>
-              <Text style={[styles.accessBadgeText, { color: ACCESS_META[hub?.access_type ?? "open"].color }]}>
-                {ACCESS_META[hub?.access_type ?? "open"].icon} {ACCESS_META[hub?.access_type ?? "open"].label}
-              </Text>
-            </View>
-          </View>
+          {token && (
+            <>
+              <View style={styles.infoDivider} />
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Access</Text>
+                <View style={styles.tokenBadge}>
+                  <Text style={styles.tokenBadgeText}>🔑 Invite only</Text>
+                </View>
+              </View>
+            </>
+          )}
         </View>
 
-        {/* Access type explanation */}
-        <View style={[styles.accessNote, { backgroundColor: ACCESS_META[hub?.access_type ?? "open"].bg, borderColor: ACCESS_META[hub?.access_type ?? "open"].color + "33" }]}>
-          <Text style={[styles.accessNoteText, { color: ACCESS_META[hub?.access_type ?? "open"].color }]}>
-            {ACCESS_META[hub?.access_type ?? "open"].description}
-          </Text>
-        </View>
-
-        {/* Benefit list */}
+        {/* ── Benefits ── */}
         <View style={styles.benefitsCard}>
           <Text style={styles.benefitsTitle}>What you get</Text>
           {[
             "Hub drivers shown first in your ride request list",
-            "\"" + (hub?.name ?? "Hub") + " Driver\" badge on matching cards",
+            `"${hub?.name ?? "Hub"} Driver" badge on matching cards`,
             "Contribute to your community's ride stats",
           ].map((b, i) => (
             <View key={i} style={styles.benefitRow}>
@@ -308,7 +427,7 @@ export default function JoinHubScreen() {
           ))}
         </View>
 
-        {/* CTA */}
+        {/* ── CTA ── */}
         <Pressable
           style={[styles.primaryBtn, state === "joining" && styles.primaryBtnBusy]}
           onPress={handleJoin}
@@ -334,34 +453,51 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#f8fafc" },
   center: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24 },
 
-  // Hero
   hero: {
     paddingTop: 32, paddingBottom: 36, paddingHorizontal: 24,
     alignItems: "center",
   },
-  heroIcon: { fontSize: 52, marginBottom: 12 },
-  heroTitle: {
-    fontSize: 28, fontWeight: "800", color: "#ffffff",
-    letterSpacing: -0.5, textAlign: "center",
-  },
-  heroSub: {
-    fontSize: 14, color: "rgba(255,255,255,0.7)",
-    fontWeight: "600", marginTop: 6,
-  },
+  heroIcon:  { fontSize: 52, marginBottom: 12 },
+  heroTitle: { fontSize: 28, fontWeight: "800", color: "#ffffff", letterSpacing: -0.5, textAlign: "center" },
+  heroSub:   { fontSize: 14, color: "rgba(255,255,255,0.7)", fontWeight: "600", marginTop: 6 },
 
-  // Content
-  content: { flex: 1, padding: 20, gap: 16 },
+  content: { flex: 1, padding: 20, gap: 14 },
+
+  // Identity card
+  identityCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#0d948833",
+    gap: 10,
+  },
+  identityLabel: { fontSize: 11, fontWeight: "700", color: "#0d9488", textTransform: "uppercase", letterSpacing: 0.6 },
+  identityRow:   { flexDirection: "row", alignItems: "center", gap: 12 },
+  avatarImg:     { width: 48, height: 48, borderRadius: 24 },
+  avatarGradient: {
+    width: 48, height: 48, borderRadius: 24,
+    alignItems: "center", justifyContent: "center",
+  },
+  avatarInitial:  { fontSize: 20, fontWeight: "800", color: "#fff" },
+  identityTextBlock: { flex: 1, gap: 2 },
+  identityName:   { fontSize: 16, fontWeight: "700", color: "#0f172a" },
+  identityEmail:  { fontSize: 13, color: "#64748b" },
+  verifiedBadge:  { backgroundColor: "#f0fdf4", borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
+  verifiedBadgeText: { fontSize: 12, fontWeight: "700", color: "#16a34a" },
 
   // Info card
   infoCard: {
     backgroundColor: "#fff", borderRadius: 16,
     padding: 16, borderWidth: 1, borderColor: "#e2e8f0",
   },
-  infoRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 10 },
-  infoLabel: { fontSize: 14, color: "#64748b", fontWeight: "500" },
-  infoValue: { fontSize: 14, color: "#0f172a", fontWeight: "700" },
-  infoValueCap: { textTransform: "capitalize" },
-  infoDivider: { height: 1, backgroundColor: "#f1f5f9" },
+  infoRow:    { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 8 },
+  infoLabel:  { fontSize: 14, color: "#64748b", fontWeight: "500" },
+  infoValue:  { fontSize: 14, color: "#0f172a", fontWeight: "700" },
+  infoDivider:{ height: 1, backgroundColor: "#f1f5f9" },
+
+  tokenBadge:     { backgroundColor: "#fef3c7", borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
+  tokenBadgeText: { fontSize: 12, fontWeight: "700", color: "#d97706" },
 
   // Benefits
   benefitsCard: {
@@ -372,55 +508,28 @@ const styles = StyleSheet.create({
     fontSize: 13, fontWeight: "700", color: "#166534",
     textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12,
   },
-  benefitRow: { flexDirection: "row", gap: 10, marginBottom: 8 },
-  benefitCheck: { fontSize: 14, color: "#16a34a", fontWeight: "800", marginTop: 1 },
+  benefitRow:  { flexDirection: "row", gap: 10, marginBottom: 8 },
+  benefitCheck:{ fontSize: 14, color: "#16a34a", fontWeight: "800", marginTop: 1 },
   benefitText: { flex: 1, fontSize: 14, color: "#0f172a", lineHeight: 20 },
 
   // Buttons
-  primaryBtn: {
-    backgroundColor: "#0d9488", borderRadius: 14,
-    paddingVertical: 16, alignItems: "center",
-  },
+  primaryBtn:     { backgroundColor: "#0d9488", borderRadius: 14, paddingVertical: 16, alignItems: "center" },
   primaryBtnBusy: { opacity: 0.7 },
   primaryBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  skipLink: { alignItems: "center", paddingVertical: 12 },
-  skipLinkText: { fontSize: 14, color: "#94a3b8", fontWeight: "600" },
+  skipLink:       { alignItems: "center", paddingVertical: 12 },
+  skipLinkText:   { fontSize: 14, color: "#94a3b8", fontWeight: "600" },
   backBtn: {
     marginTop: 20, backgroundColor: "#0d9488",
     borderRadius: 12, paddingVertical: 14, paddingHorizontal: 32,
   },
   backBtnText: { color: "#fff", fontSize: 15, fontWeight: "700" },
 
-  // Not found
-  notFoundIcon: { fontSize: 48, marginBottom: 16 },
+  notFoundIcon:  { fontSize: 48, marginBottom: 16 },
   notFoundTitle: { fontSize: 22, fontWeight: "800", color: "#0f172a", marginBottom: 8 },
-  notFoundBody: {
-    fontSize: 15, color: "#64748b", textAlign: "center",
-    lineHeight: 22, maxWidth: 300,
-  },
+  notFoundBody:  { fontSize: 15, color: "#64748b", textAlign: "center", lineHeight: 22, maxWidth: 300 },
 
-  // Access type
-  accessBadge: {
-    borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4,
-  },
-  accessBadgeText: { fontSize: 12, fontWeight: "700" },
-  accessNote: {
-    borderRadius: 12, borderWidth: 1,
-    paddingHorizontal: 14, paddingVertical: 12,
-  },
-  accessNoteText: { fontSize: 13, fontWeight: "600", lineHeight: 19 },
-
-  // Done
-  doneCard: {
-    flex: 1, padding: 24, alignItems: "center", justifyContent: "center", gap: 16,
-  },
-  doneIcon: { fontSize: 56 },
-  doneTitle: {
-    fontSize: 22, fontWeight: "800", color: "#0f172a",
-    textAlign: "center", letterSpacing: -0.3,
-  },
-  doneBody: {
-    fontSize: 15, color: "#475569", textAlign: "center",
-    lineHeight: 22, maxWidth: 320,
-  },
+  doneCard:  { flex: 1, padding: 24, alignItems: "center", justifyContent: "center", gap: 16 },
+  doneIcon:  { fontSize: 56 },
+  doneTitle: { fontSize: 22, fontWeight: "800", color: "#0f172a", textAlign: "center", letterSpacing: -0.3 },
+  doneBody:  { fontSize: 15, color: "#475569", textAlign: "center", lineHeight: 22, maxWidth: 320 },
 });

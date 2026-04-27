@@ -3,8 +3,9 @@ import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   Alert, KeyboardAvoidingView, Platform, Pressable,
-  ScrollView, Share, StyleSheet, Text, TextInput, View,
+  ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
+import SocialShareSheet from "@/components/SocialShareSheet";
 import { useTranslation } from "react-i18next";
 import { useStripe } from "@stripe/stripe-react-native";
 import { LinearGradient } from "expo-linear-gradient";
@@ -120,6 +121,7 @@ export default function PostTripRatingScreen() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [showSharePrompt, setShowSharePrompt] = useState(false);
   const [shareDismissed, setShareDismissed] = useState(false);
+  const [shareSheetRole, setShareSheetRole] = useState<"driver" | "passenger" | null>(null);
 
   useEffect(() => {
     supabase?.auth.getSession().then(({ data }) => {
@@ -131,28 +133,25 @@ export default function PostTripRatingScreen() {
     });
   }, []);
 
-  const handleShare = async (role: "driver" | "passenger") => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const msg =
-      role === "driver"
-        ? t("shareDriverMessage", {
-            defaultValue:
-              "Just helped someone get home — completely free 🌱\nNo fare. No catch. Just a neighbour helping a neighbour.\n\nThis is what KindRide is about. Together, let's build a world of kindness 💙\n\nkindride.app",
-          })
-        : t("sharePassengerMessage", {
-            driverName,
-            defaultValue: `Someone just gave me a completely free ride today 🙏\nShoutout to my amazing KindRide driver — proof that good people still exist.\n\nIf they can give, maybe I can too. Join the movement 🌱\n\nkindride.app`,
-          });
-    try {
-      await Share.share({ message: msg, title: "KindRide" });
-      const val = await AsyncStorage.getItem("kindride_share_count");
-      const next = parseInt(val ?? "0", 10) + 1;
-      await AsyncStorage.setItem("kindride_share_count", String(next));
-    } catch {
-      // user cancelled — fine
+  function buildCaption(role: "driver" | "passenger"): string {
+    if (role === "driver") {
+      return "Gave a free ride today. No fare. No detour. Just two humans being human. 🚗💚\n\nThis is #KindRide — join the movement → kindride.app";
     }
+    const name = driverName ? `Shoutout to ${driverName}` : "Shoutout to my KindRide driver";
+    return `${name} — gave me a completely free ride and asked for nothing 🙏✨\n\nThis is #KindRide → kindride.app`;
+  }
+
+  function openShareSheet(role: "driver" | "passenger") {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setShareSheetRole(role);
+  }
+
+  async function onShareSheetClose() {
+    setShareSheetRole(null);
     setShareDismissed(true);
-  };
+    const val = await AsyncStorage.getItem("kindride_share_count");
+    await AsyncStorage.setItem("kindride_share_count", String(parseInt(val ?? "0", 10) + 1));
+  }
 
   // Tip state
   const { initPaymentSheet, presentPaymentSheet } = useStripe();
@@ -533,17 +532,17 @@ export default function PostTripRatingScreen() {
                     <Text style={styles.shareCardTitle}>{t("shareInspireTitle", "You might inspire someone else today")}</Text>
                     <Text style={styles.shareCardBody}>{t("shareInspireBody", "Sharing is 100% optional — but one post could bring the next kind driver into this community.")}</Text>
 
-                    {/* Driver share — shown when current user is the driver */}
+                    {/* Driver share */}
                     {currentUserId && currentUserId === params.driverId && (
-                      <Pressable style={styles.shareBtn} onPress={() => void handleShare("driver")}>
-                        <Text style={styles.shareBtnText}>🚗 {t("shareAsDriver", "Share what I did as a driver")}</Text>
+                      <Pressable style={styles.shareBtn} onPress={() => openShareSheet("driver")}>
+                        <Text style={styles.shareBtnText}>🚗 Share my ride</Text>
                       </Pressable>
                     )}
 
-                    {/* Passenger share — shown when current user is NOT the driver */}
+                    {/* Passenger share */}
                     {(!params.driverId || currentUserId !== params.driverId) && (
-                      <Pressable style={[styles.shareBtn, styles.shareBtnPassenger]} onPress={() => void handleShare("passenger")}>
-                        <Text style={styles.shareBtnText}>🙏 {t("shareAsPassenger", "Share my free ride experience")}</Text>
+                      <Pressable style={[styles.shareBtn, styles.shareBtnPassenger]} onPress={() => openShareSheet("passenger")}>
+                        <Text style={styles.shareBtnText}>🙏 Share my experience</Text>
                       </Pressable>
                     )}
 
@@ -557,6 +556,12 @@ export default function PostTripRatingScreen() {
           )}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <SocialShareSheet
+        visible={shareSheetRole !== null}
+        caption={shareSheetRole ? buildCaption(shareSheetRole) : ""}
+        onClose={() => void onShareSheetClose()}
+      />
     </SafeAreaView>
   );
 }

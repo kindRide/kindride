@@ -160,15 +160,18 @@ def send_notification(
     payload: SendNotificationRequest,
     authorization: str | None = Header(default=None),
 ):
-    """Send push notification to a user (admin/driver use only for now)."""
+    """Send push notification to a user (founder-only)."""
     correlation_id = str(uuid4())
 
     # Import at function call time to avoid circular imports
-    from main import _verify_user_bearer_token, _service_headers, _rest_url, _rest_json_list, _require_config
+    from main import _verify_user_bearer_token, _service_headers, _rest_url, _rest_json_list, _require_config, _FOUNDER_IDS
 
     try:
         _require_config()
         sender_id = _verify_user_bearer_token(authorization)
+        if not _FOUNDER_IDS or sender_id not in _FOUNDER_IDS:
+            from fastapi import HTTPException as _HTTPException
+            raise _HTTPException(status_code=403, detail="Founder access required")
 
         logger.info(
             "Send notification started",

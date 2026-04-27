@@ -293,7 +293,7 @@ export default function DriverDashboardScreen() {
   const [hubName, setHubName] = useState<string | null>(null);
   const [hubCodeInput, setHubCodeInput] = useState("");
   const [joiningHub, setJoiningHub] = useState(false);
-  const [hubActive, setHubActive] = useState(true);
+  const [driverContext, setDriverContext] = useState<"hub" | "open">("open");
   const [connectChargesEnabled, setConnectChargesEnabled] = useState<boolean | null>(null);
   const [connectOnboarding, setConnectOnboarding] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -544,14 +544,14 @@ export default function DriverDashboardScreen() {
             car_color: profile.car_color,
             car_plate: profile.car_plate,
             car_year:  profile.car_year ?? null,
-            hub_active: hubActive,
+            hub_active: driverContext === "hub",
           });
           if (error) throw error;
           setLastSync(new Date());
           setIsAvailable(true);
           setSyncing(false);
-          // Broadcast to Hub members if driver is Hub-active
-          if (hubActive && hubName) {
+          // Broadcast to Hub members if driver is in hub context
+          if (driverContext === "hub" && hubName) {
             const base = process.env.EXPO_PUBLIC_POINTS_API_URL?.replace("/points/award", "") ?? "";
             if (base && session?.access_token) {
               fetch(`${base}/hubs/driver-available`, {
@@ -601,13 +601,13 @@ export default function DriverDashboardScreen() {
           display_name: displayName.trim() || "Driver",
           tier: "Helper",
           id_verified: idVerified ?? false,
-          hub_active: hubActive,
+          hub_active: driverContext === "hub",
         });
         if (error) throw error;
         setLastSync(new Date());
         setIsAvailable(available);
-        // Broadcast to Hub members when going online
-        if (available && hubActive && hubName) {
+        // Broadcast to Hub members when going online in hub context
+        if (available && driverContext === "hub" && hubName) {
           const base = process.env.EXPO_PUBLIC_POINTS_API_URL?.replace("/points/award", "") ?? "";
           if (base && session?.access_token) {
             fetch(`${base}/hubs/driver-available`, {
@@ -711,7 +711,13 @@ export default function DriverDashboardScreen() {
       .catch(() => {});
     fetch(`${base}/hubs/my`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : null))
-      .then((data) => { if (data?.hub) setHubName(data.hub.name); })
+      .then(async (data) => {
+        if (data?.hub) {
+          setHubName(data.hub.name);
+          const saved = await AsyncStorage.getItem("kindride_driver_context");
+          setDriverContext(saved === "hub" ? "hub" : "open");
+        }
+      })
       .catch(() => {});
     const connectStatusUrl = getConnectStatusUrlOrNull();
     if (connectStatusUrl) {
@@ -1144,29 +1150,49 @@ export default function DriverDashboardScreen() {
                   <Text style={styles.successValue}>{hubName}</Text>
                 </View>
               </View>
-              {/* Hub visibility toggle */}
-              <View style={{ height: 1, backgroundColor: "rgba(13,148,136,0.2)", marginVertical: 10 }} />
-              <View style={[styles.cardRow, { marginTop: 12 }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.successLabel}>
-                    {hubActive ? "Visible to Hub members" : "Hub hidden — platform only"}
-                  </Text>
-                  <Text style={styles.fieldHint}>
-                    {hubActive
-                      ? "Hub members will be notified when you go online."
-                      : "You're driving as a regular member. Hub members won't see you."}
-                  </Text>
-                </View>
-                <Switch
-                  value={hubActive}
-                  onValueChange={(val) => {
-                    setHubActive(val);
+              <View style={{ height: 1, backgroundColor: "rgba(13,148,136,0.2)", marginVertical: 12 }} />
+              <Text style={[styles.successLabel, { marginBottom: 10 }]}>Driving as</Text>
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                {/* Hub mode chip */}
+                <Pressable
+                  style={[
+                    styles.contextChip,
+                    driverContext === "hub" && styles.contextChipHubActive,
+                  ]}
+                  onPress={async () => {
+                    setDriverContext("hub");
+                    await AsyncStorage.setItem("kindride_driver_context", "hub");
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   }}
-                  trackColor={{ false: "#e2e8f0", true: "#0d9488" }}
-                  thumbColor="#ffffff"
-                />
+                >
+                  <Text style={styles.contextChipEmoji}>🏛️</Text>
+                  <Text style={[styles.contextChipText, driverContext === "hub" && styles.contextChipTextHub]}>
+                    {hubName}
+                  </Text>
+                </Pressable>
+                {/* Open / free-tier chip */}
+                <Pressable
+                  style={[
+                    styles.contextChip,
+                    driverContext === "open" && styles.contextChipOpenActive,
+                  ]}
+                  onPress={async () => {
+                    setDriverContext("open");
+                    await AsyncStorage.setItem("kindride_driver_context", "open");
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                >
+                  <Text style={styles.contextChipEmoji}>🌐</Text>
+                  <Text style={[styles.contextChipText, driverContext === "open" && styles.contextChipTextOpen]}>
+                    Open · Earn Points
+                  </Text>
+                </Pressable>
               </View>
+              <Text style={styles.contextHint}>
+                {driverContext === "hub"
+                  ? `Hub mode: visible to ${hubName} members. Kind Points not earned.`
+                  : "Open mode: visible to all riders. You earn Kind Points."}
+              </Text>
             </View>
           ) : (
             <View style={styles.card}>
@@ -1554,4 +1580,18 @@ const styles = StyleSheet.create({
   // ── Impact screen link
   impactLink: { alignSelf: "center", paddingVertical: 10, paddingHorizontal: 16 },
   impactLinkText: { fontSize: 13, color: "#0d9488", fontWeight: "700" },
+
+  // ── Ride context chips (hub vs open)
+  contextChip: {
+    flex: 1, flexDirection: "row", alignItems: "center", gap: 6,
+    borderRadius: 12, borderWidth: 1.5, borderColor: "#cbd5e1",
+    backgroundColor: "#f8fafc", paddingVertical: 10, paddingHorizontal: 12,
+  },
+  contextChipHubActive:  { borderColor: "#7c3aed", backgroundColor: "#f5f3ff" },
+  contextChipOpenActive: { borderColor: "#0d9488", backgroundColor: "#f0fdfa" },
+  contextChipEmoji: { fontSize: 16 },
+  contextChipText:     { fontSize: 13, fontWeight: "700", color: "#475569" },
+  contextChipTextHub:  { color: "#7c3aed" },
+  contextChipTextOpen: { color: "#0d9488" },
+  contextHint: { fontSize: 12, color: "#64748b", fontStyle: "italic", marginTop: 10 },
 });

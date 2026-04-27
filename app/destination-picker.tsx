@@ -5,10 +5,12 @@ import { useTranslation } from "react-i18next";
 import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import * as Location from "expo-location";
 import * as Haptics from "expo-haptics";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import DestinationPickerMap from "@/components/destination-picker-map/DestinationPickerMap";
 import { geocodeAddressGoogle } from "@/lib/geocode-google";
 import { getRecentDestinations, rememberDestination, type RecentDestination } from "@/lib/recent-destinations";
+import { supabase } from "@/lib/supabase";
 
 type LatLng = {
   latitude: number;
@@ -21,6 +23,11 @@ const VIBES = [
   { key: "music",  emoji: "🎵", label: "Music" },
 ] as const;
 type Vibe = typeof VIBES[number]["key"];
+
+const CONTEXT_KEY    = "kindride_ride_context";
+const CONTEXT_HUB_KEY = "kindride_context_hub_id";
+
+type HubOption = { id: string; name: string; type: string };
 
 export default function DestinationPickerScreen() {
   const router = useRouter();
@@ -45,6 +52,9 @@ export default function DestinationPickerScreen() {
   const [destinationLabelOverride, setDestinationLabelOverride] = useState<string>("");
   const [recents, setRecents] = useState<RecentDestination[]>([]);
   const [selectedVibe, setSelectedVibe] = useState<Vibe | null>(null);
+  const [userHubs, setUserHubs] = useState<HubOption[]>([]);
+  const [rideContext, setRideContext] = useState<"hub" | "open">("open");
+  const [contextHubId, setContextHubId] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -52,12 +62,51 @@ export default function DestinationPickerScreen() {
       (async () => {
         const list = await getRecentDestinations();
         if (!cancelled) setRecents(list);
+
+        // Load user's hub memberships
+        if (supabase) {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session && !cancelled) {
+            const { data } = await supabase
+              .from("hub_members")
+              .select("hub_id, hubs(id, name, type)")
+              .eq("user_id", session.user.id)
+              .eq("is_active", true)
+              .eq("status", "active");
+            const hubs: HubOption[] = (data ?? [])
+              .map((r) => {
+                const h = Array.isArray(r.hubs) ? r.hubs[0] : r.hubs;
+                return h as HubOption | null;
+              })
+              .filter((h): h is HubOption => h !== null);
+            if (!cancelled) setUserHubs(hubs);
+
+            // Restore last-used context from AsyncStorage
+            const savedCtx = await AsyncStorage.getItem(CONTEXT_KEY);
+            const savedHubId = await AsyncStorage.getItem(CONTEXT_HUB_KEY);
+            if (!cancelled && savedCtx === "hub" && savedHubId && hubs.some((h) => h.id === savedHubId)) {
+              setRideContext("hub");
+              setContextHubId(savedHubId);
+            } else if (!cancelled) {
+              setRideContext("open");
+              setContextHubId(null);
+            }
+          }
+        }
       })();
       return () => {
         cancelled = true;
       };
     }, [])
   );
+
+  async function selectContext(ctx: "hub" | "open", hubId: string | null) {
+    void Haptics.selectionAsync();
+    setRideContext(ctx);
+    setContextHubId(hubId);
+    await AsyncStorage.setItem(CONTEXT_KEY, ctx);
+    await AsyncStorage.setItem(CONTEXT_HUB_KEY, hubId ?? "");
+  }
 
   useEffect(() => {
     if (Platform.OS !== "web") return;
@@ -305,6 +354,8 @@ export default function DestinationPickerScreen() {
               destinationLat: String(point.latitude),
               destinationLng: String(point.longitude),
               destinationLabel: labelToStore,
+              rideContext,
+              ...(rideContext === "hub" && contextHubId ? { contextHubId } : {}),
               ...(selectedVibe ? { vibe: selectedVibe } : {}),
             },
           });
@@ -314,6 +365,49 @@ export default function DestinationPickerScreen() {
       >
         <Text style={styles.confirmText}>{t("useThisDestination")}</Text>
       </Pressable>
+
+      {/* ── Ride Context Selector ──────────────────────────────────────────────── */}
+      {userHubs.length > 0 && (
+        <View style={styles.vibeSection}>
+          <Text style={styles.vibeLabel}>Riding as</Text>
+          <View style={styles.vibeRow}>
+            <Pressable
+              onPress={() => selectContext("open", null)}
+              style={[styles.vibeChip, styles.contextChip, rideContext === "open" && styles.contextChipOpenActive]}
+            >
+              <Text style={styles.vibeEmoji}>🌐</Text>
+              <Text style={[styles.vibeChipText, rideContext === "open" && styles.contextTextOpenActive]}>
+                Open · Earn Points
+              </Text>
+            </Pressable>
+            {userHubs.map((hub) => {
+              const active = rideContext === "hub" && contextHubId === hub.id;
+              return (
+                <Pressable
+                  key={hub.id}
+                  onPress={() => selectContext("hub", hub.id)}
+                  style={[styles.vibeChip, styles.contextChip, active && styles.contextChipHubActive]}
+                >
+                  <Text style={styles.vibeEmoji}>
+                    {hub.type === "university" ? "🎓" : hub.type === "church" ? "⛪" : hub.type === "corporate" ? "🏢" : "🤝"}
+                  </Text>
+                  <Text style={[styles.vibeChipText, active && styles.contextTextHubActive]}>{hub.name}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {rideContext === "hub" && (
+            <Text style={styles.contextNote}>
+              Hub mode: matched with hub drivers first. Kind Points not earned.
+            </Text>
+          )}
+          {rideContext === "open" && userHubs.length > 0 && (
+            <Text style={styles.contextNote}>
+              Open mode: matched with all KindRide drivers. You earn Kind Points.
+            </Text>
+          )}
+        </View>
+      )}
 
       {/* ── Vibe Selector ────────────────────────────────────────────────────── */}
       <View style={styles.vibeSection}>
@@ -521,4 +615,10 @@ const styles = StyleSheet.create({
   vibeEmoji: { fontSize: 16 },
   vibeChipText: { fontSize: 13, fontWeight: "700", color: "#4b587c" },
   vibeChipTextActive: { color: "#1d4ed8" },
+  contextChip: { borderColor: "#cbd5e1" },
+  contextChipOpenActive: { borderColor: "#0d9488", backgroundColor: "#f0fdfa" },
+  contextChipHubActive:  { borderColor: "#7c3aed", backgroundColor: "#f5f3ff" },
+  contextTextOpenActive: { color: "#0d9488" },
+  contextTextHubActive:  { color: "#7c3aed" },
+  contextNote: { fontSize: 12, color: "#64748b", marginTop: 8, fontStyle: "italic" },
 });

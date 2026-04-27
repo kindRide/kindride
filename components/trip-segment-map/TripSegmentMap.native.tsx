@@ -19,6 +19,8 @@ export type TripSegmentMapProps = {
   dropoffPoint: LatLng | null;
   driverLocation?: LatLng | null;
   useGoogleProvider: boolean;
+  /** True while driver is still en route to pickup (boarding countdown active). */
+  isBoardingPhase?: boolean;
 };
 
 function DriverMarkerView() {
@@ -43,7 +45,7 @@ const markerStyles = StyleSheet.create({
 
 export default function TripSegmentMap(props: TripSegmentMapProps) {
   const { t } = useTranslation();
-  const { style, mapRegion, pickupPoint, dropoffPoint, driverLocation, useGoogleProvider } = props;
+  const { style, mapRegion, pickupPoint, dropoffPoint, driverLocation, useGoogleProvider, isBoardingPhase } = props;
 
   return (
     <MapView
@@ -60,6 +62,16 @@ export default function TripSegmentMap(props: TripSegmentMapProps) {
           <DriverMarkerView />
         </Marker>
       ) : null}
+      {/* Green approach line: driver → pickup (only while driver is en route) */}
+      {isBoardingPhase && driverLocation && pickupPoint ? (
+        <Polyline
+          coordinates={[driverLocation, pickupPoint]}
+          strokeColor="#16a34a"
+          strokeWidth={3}
+          lineDashPattern={[8, 4]}
+        />
+      ) : null}
+      {/* Blue route line: pickup → dropoff */}
       {pickupPoint && dropoffPoint ? (
         <Polyline coordinates={[pickupPoint, dropoffPoint]} strokeColor="#2563eb" strokeWidth={3} />
       ) : null}

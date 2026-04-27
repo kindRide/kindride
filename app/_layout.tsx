@@ -6,7 +6,7 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import { I18nManager, LogBox, View } from "react-native";
 import "react-native-reanimated";
-import { StripeProvider } from "@stripe/stripe-react-native";
+import StripeWrapper from "@/components/StripeWrapper";
 
 import { I18nextProvider } from "react-i18next";
 
@@ -59,7 +59,7 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <StripeProvider publishableKey={STRIPE_PUBLISHABLE_KEY}>
+    <StripeWrapper publishableKey={STRIPE_PUBLISHABLE_KEY}>
       <I18nextProvider i18n={i18n}>
         <AuthProvider>
           <ThemeProvider value={DefaultTheme}>
@@ -74,6 +74,6 @@ export default function RootLayout() {
           </ThemeProvider>
         </AuthProvider>
       </I18nextProvider>
-    </StripeProvider>
+    </StripeWrapper>
   );
 }

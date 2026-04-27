@@ -125,6 +125,7 @@ def _send_expo_push(messages: list[dict]) -> dict:
 # Import isolated routers
 from notifications_routes import notifications_router
 from sos_routes import sos_router
+from hub_invites_routes import hub_invites_router
 
 # Always load .env next to this file (Uvicorn's working directory may be elsewhere).
 # This file is NOT the same as KindRide/.env used by Expo — you need both.
@@ -135,11 +136,17 @@ load_dotenv(_ENV_PATH)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "").strip()
-SHARE_TOKEN_SECRET = os.getenv("SHARE_TOKEN_SECRET", "kindride-default-share-secret").strip()
-KINDRIDE_ROUTE_COMMITMENT_SECRET = os.getenv(
-    "KINDRIDE_ROUTE_COMMITMENT_SECRET",
-    SUPABASE_JWT_SECRET or SHARE_TOKEN_SECRET or "kindride-route-commitment-secret",
-).strip()
+SHARE_TOKEN_SECRET = os.getenv("SHARE_TOKEN_SECRET", "").strip()
+if not SHARE_TOKEN_SECRET:
+    raise RuntimeError(
+        "SHARE_TOKEN_SECRET env var is not set. "
+        "Generate a secure random value (e.g. openssl rand -hex 32) and add it to Render."
+    )
+# Falls back to SUPABASE_JWT_SECRET (also required — no hardcoded default survives).
+KINDRIDE_ROUTE_COMMITMENT_SECRET = (
+    os.getenv("KINDRIDE_ROUTE_COMMITMENT_SECRET", "").strip()
+    or SUPABASE_JWT_SECRET
+)
 
 # P2.1: Stripe Identity — set STRIPE_WEBHOOK_SECRET to enable webhook verification.
 # Set KINDRIDE_REQUIRE_ID_VERIFIED=true to hard-filter unverified drivers from matching.
@@ -206,6 +213,7 @@ app.add_middleware(
 # Include isolated routers
 app.include_router(notifications_router)
 app.include_router(sos_router)
+app.include_router(hub_invites_router)
 
 
 class AwardPointsRequest(BaseModel):
@@ -912,8 +920,15 @@ kindride_config_status{{service="notifications", configured="{EXPO_NOTIFICATIONS
 
 
 @app.get("/logs/recent")
-def get_recent_logs(lines: int = 50):
-    """Get recent application logs (for debugging)."""
+def get_recent_logs(
+    lines: int = 50,
+    authorization: str | None = Header(default=None),
+):
+    """Get recent application logs (founder-only debugging endpoint)."""
+    _require_config()
+    caller_id = _verify_user_bearer_token(authorization)
+    if not _FOUNDER_IDS or caller_id not in _FOUNDER_IDS:
+        raise HTTPException(status_code=403, detail="Founder access required")
     try:
         with open("kindride.log", "r") as f:
             all_lines = f.readlines()
@@ -3241,6 +3256,10 @@ def complete_ride(
                     if payload.wasZeroDetour and route_commitment_status == "failed":
                         route_commitment_multiplier_ok = False
 
+    # Hub-mode rides never earn Kind Points — the hub subscription covers driver compensation.
+    ride_context = str(existing.get("ride_context") or "open") if existing else "open"
+    hub_ride = ride_context == "hub"
+
     # Non-blocking approach: award base leg points now; rating bonus happens later.
     base_component = (10 + payload.distanceMiles) * (1.5 if route_commitment_multiplier_ok else 1.0)
     base_points = int(round(base_component))
@@ -3248,7 +3267,7 @@ def complete_ride(
     points_earned = 0
     was_idempotent = True
     with httpx.Client() as client:
-        if completing_driver_id:
+        if completing_driver_id and not hub_ride:
             points_earned, was_idempotent = _award_points_with_idempotency(
                 client=client,
                 driver_id=completing_driver_id,
@@ -3282,8 +3301,8 @@ def complete_ride(
             total_points_awarded += points_earned
 
         # P1.4 Points Ledger Parity: Evaluate First Ride & 7-Day Streak bonuses
-        # Guard: completing_driver_id may be None in passenger-only or anonymous flows.
-        if completing_driver_id:
+        # Guard: hub rides skip all bonuses; completing_driver_id may be None.
+        if completing_driver_id and not hub_ride:
             bonuses = _evaluate_daily_bonuses(client, completing_driver_id, ride_id, datetime.now(timezone.utc))
             for action_name, bonus_pts, tag in bonuses:
                 b_earned, b_idem = _award_points_with_idempotency(
@@ -4288,7 +4307,14 @@ def recordings_register(
     expiry and flag-based retention.
     """
     _require_config()
-    _verify_user_bearer_token(authorization)
+    caller_id = _verify_user_bearer_token(authorization)
+    # Enforce storage path ownership: path must be under the caller's own folder.
+    # Supabase Storage enforces <user_id>/<filename> layout; we mirror that check here.
+    if not payload.storagePath.startswith(f"{caller_id}/"):
+        raise HTTPException(
+            status_code=403,
+            detail="storagePath must be within your own storage folder",
+        )
     with httpx.Client() as client:
         r = client.post(
             _rest_url("/trip_recordings"),

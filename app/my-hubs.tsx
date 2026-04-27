@@ -95,7 +95,11 @@ export default function MyHubsScreen() {
         throw error;
       }
 
-      setHubs(((data ?? []) as HubMembershipRow[]).filter((item) => item.hubs));
+      const rows = (data ?? []).map((r) => ({
+        ...r,
+        hubs: Array.isArray(r.hubs) ? (r.hubs[0] ?? null) : (r.hubs ?? null),
+      })) as HubMembershipRow[];
+      setHubs(rows.filter((item) => item.hubs));
     } catch {
       setHubs([]);
     } finally {
@@ -227,9 +231,17 @@ export default function MyHubsScreen() {
               </View>
 
               <View style={styles.actionsRow}>
-                <Pressable style={styles.viewButton} onPress={() => router.push("/(tabs)/ride-request")}>
-                  <Text style={styles.viewButtonText}>View</Text>
-                </Pressable>
+                {item.role === "hub_admin" && (
+                  <Pressable
+                    style={styles.manageButton}
+                    onPress={() => router.push(
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      { pathname: "/hub-admin/[hubId]" as any, params: { hubId: item.hub_id, hubName: item.hubs?.name ?? "" } }
+                    )}
+                  >
+                    <Text style={styles.manageButtonText}>Manage</Text>
+                  </Pressable>
+                )}
                 <Pressable
                   style={[styles.leaveButton, isLeaving && styles.buttonDisabled]}
                   onPress={() => handleLeave(item)}
@@ -403,6 +415,21 @@ const styles = StyleSheet.create({
   },
   viewButtonText: {
     color: "#0d9488",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  manageButton: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: "#7c3aed",
+    paddingVertical: 12,
+    backgroundColor: "#ffffff",
+  },
+  manageButtonText: {
+    color: "#7c3aed",
     fontSize: 14,
     fontWeight: "700",
   },

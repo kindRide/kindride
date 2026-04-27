@@ -7,6 +7,7 @@ import {
   Alert,
   Platform,
   Pressable,
+  ScrollView,
   Share,
   StyleSheet,
   Switch,
@@ -63,6 +64,12 @@ export default function ActiveTripScreen() {
     preMatchedNextDriverEtaMinutes?: string;
     preMatchedNextDriverHeading?: string;
     rideId?: string;
+    driverRideCount?: string;
+    driverThumbsUp?: string;
+    driverThumbsDown?: string;
+    driverHearts?: string;
+    vehicleInfo?: string;
+    seatCapacity?: string;
   }>();
   const driverId = typeof params.driverId === "string" && params.driverId.length > 0 ? params.driverId : "";
   const driverName =
@@ -101,6 +108,12 @@ export default function ActiveTripScreen() {
   const destinationLat = typeof params.destinationLat === "string" ? params.destinationLat : "";
   const destinationLng = typeof params.destinationLng === "string" ? params.destinationLng : "";
   const destinationLabel = typeof params.destinationLabel === "string" ? params.destinationLabel : "";
+  const driverRideCount = typeof params.driverRideCount === "string" && params.driverRideCount.length > 0 ? params.driverRideCount : null;
+  const driverThumbsUp = params.driverThumbsUp ? parseInt(params.driverThumbsUp, 10) : null;
+  const driverThumbsDown = params.driverThumbsDown ? parseInt(params.driverThumbsDown, 10) : null;
+  const driverHearts = params.driverHearts ? parseInt(params.driverHearts, 10) : null;
+  const vehicleInfo = typeof params.vehicleInfo === "string" && params.vehicleInfo.length > 0 ? params.vehicleInfo : null;
+  const seatCapacity = params.seatCapacity ? parseInt(params.seatCapacity, 10) : null;
 
   const [autoJourneyId, setAutoJourneyId] = useState<string | null>(journeyId ?? null);
   const [autoLegIndex, setAutoLegIndex] = useState<number>(legIndexNum);
@@ -115,6 +128,7 @@ export default function ActiveTripScreen() {
   const cancelInFlightRef = useRef(false);
   const shareInFlightRef = useRef(false);
   const ratingNavigatedRef = useRef(false);
+  const proximityAutoStartedRef = useRef(false);
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [liveDriverLocation, setLiveDriverLocation] = useState<LatLng | null>(null);
@@ -526,6 +540,19 @@ export default function ActiveTripScreen() {
     }
   }, [secondsLeft, tripStartedAtIso]);
 
+  // Proximity auto-start: skip countdown when driver arrives within ~80m of passenger
+  useEffect(() => {
+    if (!driverId) return; // only passenger flow (driver has no driverId param)
+    if (!liveDriverLocation || !pickupPoint) return;
+    if (secondsLeft === 0) return;
+    if (proximityAutoStartedRef.current) return;
+    const dist = haversineMiles(liveDriverLocation, pickupPoint);
+    if (dist < 0.05) { // ~80 metres
+      proximityAutoStartedRef.current = true;
+      setSecondsLeft(0);
+    }
+  }, [liveDriverLocation, pickupPoint, secondsLeft, driverId]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -687,362 +714,423 @@ export default function ActiveTripScreen() {
   };
 
 
+  // Route progress (0–1) — only meaningful once trip starts and we have all 3 points
+  const routeProgress = (() => {
+    if (!tripStartedAtIso || !pickupPoint || !dropoffPoint || !liveDriverLocation) return null;
+    const total = haversineMiles(pickupPoint, dropoffPoint);
+    if (total <= 0) return null;
+    const remaining = haversineMiles(liveDriverLocation, dropoffPoint);
+    return Math.max(0, Math.min(1, (total - remaining) / total));
+  })();
+
+  const driverDistMiles =
+    liveDriverLocation && pickupPoint && currentUserId !== driverId
+      ? haversineMiles(liveDriverLocation, pickupPoint)
+      : null;
+  const driverEtaMins = driverDistMiles !== null ? Math.max(1, Math.round(driverDistMiles / 0.3)) : null;
+  const isDriverArrivingNow = driverDistMiles !== null && driverDistMiles < 0.1;
+  const driverInitials =
+    driverName
+      .split(" ")
+      .map((w) => w[0])
+      .filter(Boolean)
+      .join("")
+      .toUpperCase()
+      .slice(0, 2) || "?";
+
   return (
     <View style={styles.screen}>
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>{t("activeTrip")}</Text>
-        <Link href="/sos" asChild>
-          <Pressable style={styles.sosButton}>
-            <Text style={styles.sosButtonText}>{t("sosShort")}</Text>
-          </Pressable>
-        </Link>
+      {/* ── Full-screen map ── */}
+      {Platform.OS === "web" ? (
+        <View style={styles.mapPlaceholder}>
+          <Text style={styles.mapPlaceholderTitle}>{t("tripSegment")}</Text>
+          <Text style={styles.mapPlaceholderText}>{t("liveMapsHint")}</Text>
+        </View>
+      ) : (
+        <TripSegmentMap
+          key="trip-segment-map"
+          style={StyleSheet.absoluteFillObject}
+          mapRegion={mapRegion}
+          pickupPoint={pickupPoint}
+          dropoffPoint={dropoffPoint}
+          driverLocation={liveDriverLocation}
+          useGoogleProvider={useGoogleProvider}
+          isBoardingPhase={secondsLeft > 0}
+        />
+      )}
+
+      {/* ── Header overlay (top) ── */}
+      <View style={styles.headerOverlay} pointerEvents="box-none">
+        <View style={styles.headerRow}>
+          <Text style={styles.title}>{t("activeTrip")}</Text>
+          <Link href="/sos" asChild>
+            <Pressable style={styles.sosButton}>
+              <Text style={styles.sosButtonText}>{t("sosShort")}</Text>
+            </Pressable>
+          </Link>
+        </View>
       </View>
 
-      <View style={styles.mapWrap}>
-        {Platform.OS === "web" ? (
-          <View style={styles.mapPlaceholder}>
-            <Text style={styles.mapPlaceholderTitle}>{t("tripSegment")}</Text>
-            <Text style={styles.mapPlaceholderText}>
-              {t("liveMapsHint")}
+      {/* ── Bottom sheet ── */}
+      <View style={styles.bottomSheet}>
+        {/* Fixed driver panel — always visible */}
+        <View style={styles.driverPanel}>
+          <View style={styles.sheetHandle} />
+
+          {/* ETA strip */}
+          <View style={styles.etaStrip}>
+            <Text style={styles.etaMainText}>
+              {isDriverArrivingNow
+                ? "🚗  Driver arriving now!"
+                : driverEtaMins !== null
+                ? `🚗  Arrives in ${driverEtaMins} min`
+                : tripStatus}
             </Text>
           </View>
-        ) : (
-          <TripSegmentMap
-            key="trip-segment-map"
-            style={styles.map}
-            mapRegion={mapRegion}
-            pickupPoint={pickupPoint}
-            dropoffPoint={dropoffPoint}
-            driverLocation={liveDriverLocation}
-            useGoogleProvider={useGoogleProvider}
-          />
-        )}
-        <View style={styles.mapCaption} pointerEvents="none">
-          <Text style={styles.mapCaptionText}>
-            {useGoogleProvider
-              ? t("straightLineHint")
-              : t("addGoogleMapsKeyHint")}
-          </Text>
-        </View>
-      </View>
 
-      <View style={styles.bottomCard}>
-        {secondsLeft === 0 && <SessionRecorder isActive={true} rideId={rideId} />}
-        {autoJourneyId ? (
-          <Text style={[styles.legLabel, secondsLeft === 0 && { marginTop: 12 }]}>{t("multiLegLegX", { leg: autoLegIndex })}</Text>
-        ) : null}
-        {destinationLabel || (destinationLat && destinationLng) ? (
-          <Text style={styles.destText}>
-            {t("destination", { dest: destinationLabel ? destinationLabel : `${destinationLat}, ${destinationLng}` })}
-          </Text>
-        ) : null}
-        {/* Live driver proximity banner — only shown to passenger while driver is en route */}
-        {liveDriverLocation && pickupPoint && currentUserId !== driverId && (
-          (() => {
-            const distMi = haversineMiles(liveDriverLocation, pickupPoint);
-            const etaMins = Math.max(1, Math.round(distMi / 0.3)); // ~18 mph city speed
-            return (
-              <View style={styles.liveEtaBanner}>
-                <Text style={styles.liveEtaDot}>🚗</Text>
-                <Text style={styles.liveEtaText}>
-                  {distMi < 0.1
-                    ? t("driverArrivingNow", "Driver arriving now!")
-                    : t("driverDistanceAway", "Driver is {{dist}} mi away · ~{{eta}} min", {
-                        dist: distMi.toFixed(1),
-                        eta: etaMins,
-                      })}
-                </Text>
-              </View>
-            );
-          })()
-        )}
-        <Text style={styles.driverName}>{t("driverName", { name: driverName })}</Text>
-        <Text style={styles.meta}>{t("carInfo")}</Text>
-        <Text style={styles.meta}>{t("etaToPickup")}</Text>
-        {autoJourneyId ? (
-          <Text style={styles.repHint}>
-            {nextDriver
-              ? t("nextDriverFound", { name: nextDriver.name, eta: nextDriver.etaMinutes })
-              : isSearchingNextDriver
-                ? t("searchingNextDriver")
-                : t("handoffSearchActive")}
-          </Text>
-        ) : null}
-        {passengerRep && passengerRep.rating_count > 0 ? (
-          <Text style={styles.repText}>
-            {t("passengerReputation", {
-              score: passengerRep.total_score,
-              count: passengerRep.rating_count,
-              s: passengerRep.rating_count === 1 ? "" : "s"
-            })}
-          </Text>
-        ) : passengerId ? (
-          <Text style={styles.repHint}>{t("passengerProfileNoRatings")}</Text>
-        ) : null}
-        <Text style={styles.statusText}>{tripStatus}</Text>
-        {(rideStatus === "accepted" || rideStatus === "in_progress") ? (
-          <Pressable
-            onPress={() => {
-              setUnreadChatCount(0);
-              router.push({ pathname: "/trip-chat", params: { rideId } });
-            }}
-            style={[styles.chatButton, unreadChatCount > 0 && styles.chatButtonUnread]}
-          >
-            <View style={styles.chatButtonInner}>
-              <Text style={[styles.chatButtonText, unreadChatCount > 0 && styles.chatButtonTextUnread]}>
-                💬  {unreadChatCount > 0 ? `${unreadChatCount} new message${unreadChatCount > 1 ? "s" : ""}` : "Chat"}
-              </Text>
-              {unreadChatCount > 0 && (
-                <View style={styles.chatBadge}>
-                  <Text style={styles.chatBadgeText}>
-                    {unreadChatCount > 9 ? "9+" : String(unreadChatCount)}
-                  </Text>
-                </View>
-              )}
+          {/* Driver / passenger card */}
+          <View style={styles.driverCard}>
+            <View style={styles.avatarCircle}>
+              <Text style={styles.avatarInitials}>{driverInitials}</Text>
             </View>
-          </Pressable>
-        ) : null}
-        {rideStatus === "accepted" ? (
-          <Pressable
-            onPress={confirmCancelRide}
-            disabled={isCancellingRide}
-            style={[styles.cancelRideButton, isCancellingRide && styles.cancelRideButtonDisabled]}
-          >
-            {isCancellingRide ? (
-              <ActivityIndicator color="#ef4444" />
-            ) : (
-              <Text style={styles.cancelRideButtonText}>Cancel ride</Text>
-            )}
-          </Pressable>
-        ) : null}
-        <Text style={styles.legDistanceLabel}>
-          {autoJourneyId ? t("thisLegMiles") : t("tripMiles")}
-        </Text>
-        <TextInput
-          value={legMilesText}
-          onChangeText={setLegMilesText}
-          placeholder={t("autoFilledOnEndTrip")}
-          keyboardType="decimal-pad"
-          style={styles.legMilesInput}
-        />
-        <Text style={styles.detourHint}>
-          {t("detourHint")}
-        </Text>
-        <View style={styles.switchRow}>
-          <Switch value={wasZeroDetour} onValueChange={setWasZeroDetour} />
-          <Text style={styles.switchLabel}>{t("minimalDetour")}</Text>
+            <View style={styles.driverMeta}>
+              <View style={styles.driverNameRow}>
+                <Text style={styles.driverNameText}>
+                  {driverName || (passengerId ? "Passenger" : "Driver")}
+                </Text>
+                {driverRideCount ? (
+                  <Text style={styles.rideCount}>{driverRideCount} rides</Text>
+                ) : null}
+              </View>
+              {(driverThumbsUp !== null || driverThumbsDown !== null || driverHearts !== null) ? (
+                <View style={styles.driverStatsRow}>
+                  {driverThumbsUp !== null && <Text style={styles.statChip}>👍 {driverThumbsUp}</Text>}
+                  {driverThumbsDown !== null && <Text style={styles.statChip}>👎 {driverThumbsDown}</Text>}
+                  {driverHearts !== null && <Text style={styles.statChip}>❤️ {driverHearts}</Text>}
+                </View>
+              ) : null}
+              {(vehicleInfo || seatCapacity) ? (
+                <View style={styles.vehicleRow}>
+                  {vehicleInfo ? <Text style={styles.vehicleText}>{vehicleInfo}</Text> : null}
+                  {seatCapacity ? <Text style={styles.seatBadge}>👥 {seatCapacity}</Text> : null}
+                </View>
+              ) : null}
+              {passengerRep && passengerRep.rating_count > 0 ? (
+                <Text style={styles.passengerRepChip}>
+                  ⭐ {passengerRep.total_score} · {passengerRep.rating_count} rating{passengerRep.rating_count === 1 ? "" : "s"}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+
+          {/* Primary action row */}
+          <View style={styles.actionRow}>
+            {rideStatus === "accepted" ? (
+              <Pressable
+                onPress={confirmCancelRide}
+                disabled={isCancellingRide}
+                style={[styles.actionBtn, styles.editRideBtn]}
+              >
+                {isCancellingRide ? (
+                  <ActivityIndicator color="#334155" />
+                ) : (
+                  <Text style={styles.editRideBtnText}>✏️  Edit Ride</Text>
+                )}
+              </Pressable>
+            ) : null}
+            {(rideStatus === "accepted" || rideStatus === "in_progress") ? (
+              <Pressable
+                onPress={() => {
+                  setUnreadChatCount(0);
+                  router.push({ pathname: "/trip-chat", params: { rideId } });
+                }}
+                style={[styles.actionBtn, styles.contactBtn, unreadChatCount > 0 && styles.contactBtnUnread]}
+              >
+                <View style={styles.contactBtnInner}>
+                  <Text style={[styles.contactBtnText, unreadChatCount > 0 && styles.contactBtnTextUnread]}>
+                    💬  {unreadChatCount > 0
+                      ? `${unreadChatCount} new`
+                      : driverId ? "Contact Driver" : "Contact Rider"}
+                  </Text>
+                  {unreadChatCount > 0 ? (
+                    <View style={styles.chatBadge}>
+                      <Text style={styles.chatBadgeText}>
+                        {unreadChatCount > 9 ? "9+" : String(unreadChatCount)}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
-        <Pressable
-          onPress={async () => {
-            if (isCompletingRide || completeInFlightRef.current) return;
-            completeInFlightRef.current = true;
-            if (!ridesCompleteEndpoint) {
-              Alert.alert(
-                t("backendNotConfigured"),
-                t("backendMissingEndpoint")
-              );
-              completeInFlightRef.current = false;
-              return;
-            }
 
-            let latestStatusResponse: { status?: string; passenger_id?: string | null } | null = null;
-            try {
-              latestStatusResponse = await fetchRideStatusOnce();
-            } catch {
-              completeInFlightRef.current = false;
-              Alert.alert(t("rideNotReady"), t("checkConnection", "Check your connection."));
-              return;
-            }
-            const effectiveStatus = latestStatusResponse?.status ?? rideStatus;
-            if (latestStatusResponse?.passenger_id) {
-              setRidePassengerId(latestStatusResponse.passenger_id);
-            }
-            if (effectiveStatus && !["accepted", "in_progress", "completed"].includes(effectiveStatus)) {
-              setRideStatus(effectiveStatus);
-              Alert.alert(
-                t("rideNotReady"),
-                t("rideStatusWait", { status: effectiveStatus })
-              );
-              completeInFlightRef.current = false;
-              return;
-            }
+        {/* Scrollable secondary content */}
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.bottomSheetContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Route progress bar */}
+          {routeProgress !== null && (
+            <View style={styles.progressContainer}>
+              <View style={styles.progressHeader}>
+                <Text style={styles.progressLabel}>Route progress</Text>
+                <Text style={styles.progressPct}>{Math.round(routeProgress * 100)}%</Text>
+              </View>
+              <View style={styles.progressTrack}>
+                <View style={[styles.progressFill, { width: `${Math.round(routeProgress * 100)}%` }]} />
+              </View>
+            </View>
+          )}
 
-            // Auto-calculate drop-off GPS and miles if not already set
-            let resolvedMilesText = legMilesText;
-            let resolvedDropoff = dropoffPoint;
-            if (!resolvedDropoff || !resolvedMilesText.trim()) {
+          {secondsLeft === 0 && <SessionRecorder isActive={true} rideId={rideId} />}
+          {autoJourneyId ? (
+            <Text style={[styles.legLabel, secondsLeft === 0 && { marginTop: 12 }]}>{t("multiLegLegX", { leg: autoLegIndex })}</Text>
+          ) : null}
+          {destinationLabel || (destinationLat && destinationLng) ? (
+            <Text style={styles.destText}>
+              {t("destination", { dest: destinationLabel ? destinationLabel : `${destinationLat}, ${destinationLng}` })}
+            </Text>
+          ) : null}
+          {autoJourneyId ? (
+            <Text style={styles.repHint}>
+              {nextDriver
+                ? t("nextDriverFound", { name: nextDriver.name, eta: nextDriver.etaMinutes })
+                : isSearchingNextDriver
+                  ? t("searchingNextDriver")
+                  : t("handoffSearchActive")}
+            </Text>
+          ) : null}
+          {passengerId && (!passengerRep || passengerRep.rating_count === 0) ? (
+            <Text style={styles.repHint}>{t("passengerProfileNoRatings")}</Text>
+          ) : null}
+          <Text style={styles.statusText}>{tripStatus}</Text>
+          <Text style={styles.legDistanceLabel}>
+            {autoJourneyId ? t("thisLegMiles") : t("tripMiles")}
+          </Text>
+          <TextInput
+            value={legMilesText}
+            onChangeText={setLegMilesText}
+            placeholder={t("autoFilledOnEndTrip")}
+            keyboardType="decimal-pad"
+            style={styles.legMilesInput}
+          />
+          <Text style={styles.detourHint}>
+            {t("detourHint")}
+          </Text>
+          <View style={styles.switchRow}>
+            <Switch value={wasZeroDetour} onValueChange={setWasZeroDetour} />
+            <Text style={styles.switchLabel}>{t("minimalDetour")}</Text>
+          </View>
+          <Pressable
+            onPress={async () => {
+              if (isCompletingRide || completeInFlightRef.current) return;
+              completeInFlightRef.current = true;
+              if (!ridesCompleteEndpoint) {
+                Alert.alert(
+                  t("backendNotConfigured"),
+                  t("backendMissingEndpoint")
+                );
+                completeInFlightRef.current = false;
+                return;
+              }
+
+              let latestStatusResponse: { status?: string; passenger_id?: string | null } | null = null;
               try {
-                const { status } = await Location.requestForegroundPermissionsAsync();
-                if (status === "granted") {
-                  const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-                  resolvedDropoff = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-                  setDropoffPoint(resolvedDropoff);
-                  if (pickupPoint) {
-                    const straightMi = clampLegMilesStraightLine(haversineMiles(pickupPoint, resolvedDropoff));
-                    resolvedMilesText = String(straightMi);
-                    setLegMilesText(resolvedMilesText);
+                latestStatusResponse = await fetchRideStatusOnce();
+              } catch {
+                completeInFlightRef.current = false;
+                Alert.alert(t("rideNotReady"), t("checkConnection", "Check your connection."));
+                return;
+              }
+              const effectiveStatus = latestStatusResponse?.status ?? rideStatus;
+              if (latestStatusResponse?.passenger_id) {
+                setRidePassengerId(latestStatusResponse.passenger_id);
+              }
+              if (effectiveStatus && !["accepted", "in_progress", "completed"].includes(effectiveStatus)) {
+                setRideStatus(effectiveStatus);
+                Alert.alert(
+                  t("rideNotReady"),
+                  t("rideStatusWait", { status: effectiveStatus })
+                );
+                completeInFlightRef.current = false;
+                return;
+              }
+
+              // Auto-calculate drop-off GPS and miles if not already set
+              let resolvedMilesText = legMilesText;
+              let resolvedDropoff = dropoffPoint;
+              if (!resolvedDropoff || !resolvedMilesText.trim()) {
+                try {
+                  const { status } = await Location.requestForegroundPermissionsAsync();
+                  if (status === "granted") {
+                    const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                    resolvedDropoff = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+                    setDropoffPoint(resolvedDropoff);
+                    if (pickupPoint) {
+                      const straightMi = clampLegMilesStraightLine(haversineMiles(pickupPoint, resolvedDropoff));
+                      resolvedMilesText = String(straightMi);
+                      setLegMilesText(resolvedMilesText);
+                    }
+                  }
+                } catch {
+                  // GPS unavailable — fall through to manual validation below
+                }
+              }
+
+              const normalizedMiles = resolvedMilesText.trim().replace(",", ".");
+              const miles = parseFloat(normalizedMiles);
+              if (!Number.isFinite(miles) || miles < 0.1 || miles > 500) {
+                Alert.alert(
+                  t("tripDistance"),
+                  t("enterMilesWarning")
+                );
+                completeInFlightRef.current = false;
+                return;
+              }
+
+              try {
+                setIsCompletingRide(true);
+                const sessionResult = supabase
+                  ? await supabase.auth.getSession()
+                  : null;
+                const accessToken = sessionResult?.data.session?.access_token;
+
+                const startedAtToSend =
+                  tripStartedAtIso ?? (secondsLeft === 0 ? new Date().toISOString() : null);
+
+                const destLatNum = Number(destinationLat);
+                const destLngNum = Number(destinationLng);
+                const hasDest =
+                  destinationLat.length > 0 &&
+                  destinationLng.length > 0 &&
+                  Number.isFinite(destLatNum) &&
+                  Number.isFinite(destLngNum);
+
+                const payload = {
+                  rideId,
+                  wasZeroDetour,
+                  distanceMiles: miles,
+                  ...(pickupPoint ? { pickupLat: pickupPoint.latitude, pickupLng: pickupPoint.longitude } : {}),
+                  ...(resolvedDropoff ? { dropoffLat: resolvedDropoff.latitude, dropoffLng: resolvedDropoff.longitude } : {}),
+                  ...(passengerId ? { passengerId } : {}),
+                  ...(autoJourneyId ? { journeyId: autoJourneyId, legIndex: autoLegIndex } : {}),
+                  ...(hasDest
+                    ? {
+                        destinationLat: destLatNum,
+                        destinationLng: destLngNum,
+                        ...(destinationLabel ? { destinationLabel } : {}),
+                      }
+                    : {}),
+                  ...(startedAtToSend ? { startedAt: startedAtToSend } : {}),
+                };
+
+                const isDriverFlow = !driverId;
+                if (isDriverFlow) {
+                  try {
+                    await attestRouteCommitment({
+                      rideId,
+                      declaredIntent: wasZeroDetour ? "zero_detour" : "detour",
+                      pickup: pickupPoint,
+                      dropoff: resolvedDropoff,
+                      destination: hasDest
+                        ? { latitude: destLatNum, longitude: destLngNum }
+                        : null,
+                      distanceMiles: miles,
+                    });
+                  } catch (e) {
+                    console.warn("[route-commitment] attestation failed", e);
                   }
                 }
-              } catch {
-                // GPS unavailable — fall through to manual validation below
-              }
-            }
 
-            const normalizedMiles = resolvedMilesText.trim().replace(",", ".");
-            const miles = parseFloat(normalizedMiles);
-            if (!Number.isFinite(miles) || miles < 0.1 || miles > 500) {
-              Alert.alert(
-                t("tripDistance"),
-                t("enterMilesWarning")
-              );
-              completeInFlightRef.current = false;
-              return;
-            }
+                const response = await fetch(ridesCompleteEndpoint, {
+                  method: "POST",
+                  headers: withRideTraceHeaders({
+                    "Content-Type": "application/json",
+                    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+                  }, createRideTraceId("active-trip", rideId, "complete")),
+                  body: JSON.stringify(payload),
+                });
 
-            try {
-              setIsCompletingRide(true);
-              const sessionResult = supabase
-                ? await supabase.auth.getSession()
-                : null;
-              const accessToken = sessionResult?.data.session?.access_token;
-
-              const startedAtToSend =
-                tripStartedAtIso ?? (secondsLeft === 0 ? new Date().toISOString() : null);
-
-              const destLatNum = Number(destinationLat);
-              const destLngNum = Number(destinationLng);
-              const hasDest =
-                destinationLat.length > 0 &&
-                destinationLng.length > 0 &&
-                Number.isFinite(destLatNum) &&
-                Number.isFinite(destLngNum);
-
-              const payload = {
-                rideId,
-                wasZeroDetour,
-                distanceMiles: miles,
-                ...(pickupPoint ? { pickupLat: pickupPoint.latitude, pickupLng: pickupPoint.longitude } : {}),
-                ...(resolvedDropoff ? { dropoffLat: resolvedDropoff.latitude, dropoffLng: resolvedDropoff.longitude } : {}),
-                ...(passengerId ? { passengerId } : {}),
-                ...(autoJourneyId ? { journeyId: autoJourneyId, legIndex: autoLegIndex } : {}),
-                ...(hasDest
-                  ? {
-                      destinationLat: destLatNum,
-                      destinationLng: destLngNum,
-                      ...(destinationLabel ? { destinationLabel } : {}),
-                    }
-                  : {}),
-                ...(startedAtToSend ? { startedAt: startedAtToSend } : {}),
-              };
-
-              const isDriverFlow = !driverId;
-              if (isDriverFlow) {
-                try {
-                  await attestRouteCommitment({
-                    rideId,
-                    declaredIntent: wasZeroDetour ? "zero_detour" : "detour",
-                    pickup: pickupPoint,
-                    dropoff: resolvedDropoff,
-                    destination: hasDest
-                      ? { latitude: destLatNum, longitude: destLngNum }
-                      : null,
-                    distanceMiles: miles,
-                  });
-                } catch (e) {
-                  console.warn("[route-commitment] attestation failed", e);
+                const rawErr = await response.text().catch(() => "");
+                if (!response.ok) {
+                  throw new Error(formatBackendErrorBody(rawErr, response.status));
                 }
+
+                const ratingMeta = {
+                  distanceMiles: String(miles),
+                  wasZeroDetour: wasZeroDetour ? "true" : "false",
+                };
+                const tripMeta = {
+                  ...ratingMeta,
+                  destinationDirection,
+                  ...(destinationLat ? { destinationLat } : {}),
+                  ...(destinationLng ? { destinationLng } : {}),
+                  ...(destinationLabel ? { destinationLabel } : {}),
+                  ...(passengerId ? { passengerId } : {}),
+                  ...(autoJourneyId ? { journeyId: autoJourneyId, legIndex: String(autoLegIndex) } : {}),
+                };
+                if (isDriverFlow) {
+                  const effectivePassengerId = ridePassengerId ?? passengerId ?? "";
+                  router.push({
+                    pathname: "/rate-passenger",
+                    params: { rideId, passengerId: effectivePassengerId, ...ratingMeta },
+                  });
+                } else {
+                  router.push({
+                    pathname: "/post-trip-rating",
+                    params: { rideId, driverName, driverId, ...tripMeta },
+                  });
+                }
+              } catch (e) {
+                const message = e instanceof Error ? e.message : t("rideCompletionFailed");
+                Alert.alert(
+                  t("couldNotCompleteRide"),
+                  message + "\n\n" + t("signInOnPointsTab")
+                );
+              } finally {
+                setIsCompletingRide(false);
+                completeInFlightRef.current = false;
               }
-
-              const response = await fetch(ridesCompleteEndpoint, {
-                method: "POST",
-                headers: withRideTraceHeaders({
-                  "Content-Type": "application/json",
-                  ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-                }, createRideTraceId("active-trip", rideId, "complete")),
-                body: JSON.stringify(payload),
-              });
-
-              const rawErr = await response.text().catch(() => "");
-              if (!response.ok) {
-                throw new Error(formatBackendErrorBody(rawErr, response.status));
-              }
-
-              // Driver-only: POST /passengers/rate requires JWT driver_id == rides.driver_id.
-              // This screen runs as the passenger — never open rate-passenger here (would 400).
-              const ratingMeta = {
-                distanceMiles: String(miles),
-                wasZeroDetour: wasZeroDetour ? "true" : "false",
-              };
-              const tripMeta = {
-                ...ratingMeta,
-                destinationDirection,
-                ...(destinationLat ? { destinationLat } : {}),
-                ...(destinationLng ? { destinationLng } : {}),
-                ...(destinationLabel ? { destinationLabel } : {}),
-                ...(passengerId ? { passengerId } : {}),
-                ...(autoJourneyId ? { journeyId: autoJourneyId, legIndex: String(autoLegIndex) } : {}),
-              };
-              // If driverId was not passed, the current user IS the driver (came from incoming-ride).
-              // Route them to rate-passenger. Otherwise this is the passenger — rate the driver.
-              if (isDriverFlow) {
-                const effectivePassengerId = ridePassengerId ?? passengerId ?? "";
-                router.push({
-                  pathname: "/rate-passenger",
-                  params: { rideId, passengerId: effectivePassengerId, ...ratingMeta },
-                });
-              } else {
-                router.push({
-                  pathname: "/post-trip-rating",
-                  params: { rideId, driverName, driverId, ...tripMeta },
-                });
-              }
-            } catch (e) {
-              const message = e instanceof Error ? e.message : t("rideCompletionFailed");
-              Alert.alert(
-                t("couldNotCompleteRide"),
-                message + "\n\n" + t("signInOnPointsTab")
-              );
-            } finally {
-              setIsCompletingRide(false);
-              completeInFlightRef.current = false;
-            }
-          }}
-          disabled={isCompletingRide}
-          style={styles.endTripButton}
-        >
-          <Text style={styles.endTripButtonText}>
-            {isCompletingRide ? t("completing") : t("endTrip")}
-          </Text>
-        </Pressable>
-
-        <Pressable
-          onPress={shareTrip}
-          disabled={isSharing}
-          style={[styles.shareButton, isSharing && styles.shareButtonDisabled]}
-        >
-          <Text style={styles.shareButtonText}>{isSharing ? t("sharing") : t("shareTrip")}</Text>
-        </Pressable>
-        {shareError ? <Text style={styles.errorBannerBody}>{shareError}</Text> : null}
-        {shareUrl ? (
-          <View style={styles.shareLinkBlock}>
-            <Text style={styles.shareLinkLabel}>{t("shareToken")}</Text>
-            <Text style={styles.shareLinkValue} selectable>
-              {shareToken}
+            }}
+            disabled={isCompletingRide}
+            style={styles.endTripButton}
+          >
+            <Text style={styles.endTripButtonText}>
+              {isCompletingRide ? t("completing") : t("endTrip")}
             </Text>
-            <Text style={[styles.shareLinkLabel, { marginTop: 6 }]}>{t("deepLink")}</Text>
-            <Text style={styles.shareLinkValue} selectable>
-              {shareUrl}
-            </Text>
-          </View>
-        ) : null}
-      </View>
+          </Pressable>
 
-      <Link href={backToSearchHref} style={styles.link}>
-        {autoJourneyId ? t("chooseDifferentNextDriver") : t("goBackToRideRequest")}
-      </Link>
-      <Link href="/(tabs)" style={styles.linkSecondary}>
-        {t("goToHome")}
-      </Link>
+          <Pressable
+            onPress={shareTrip}
+            disabled={isSharing}
+            style={[styles.shareButton, isSharing && styles.shareButtonDisabled]}
+          >
+            <Text style={styles.shareButtonText}>{isSharing ? t("sharing") : t("shareTrip")}</Text>
+          </Pressable>
+          {shareError ? <Text style={styles.errorBannerBody}>{shareError}</Text> : null}
+          {shareUrl ? (
+            <View style={styles.shareLinkBlock}>
+              <Text style={styles.shareLinkLabel}>{t("shareToken")}</Text>
+              <Text style={styles.shareLinkValue} selectable>
+                {shareToken}
+              </Text>
+              <Text style={[styles.shareLinkLabel, { marginTop: 6 }]}>{t("deepLink")}</Text>
+              <Text style={styles.shareLinkValue} selectable>
+                {shareUrl}
+              </Text>
+            </View>
+          ) : null}
+
+          <Link href={backToSearchHref} style={styles.link}>
+            {autoJourneyId ? t("chooseDifferentNextDriver") : t("goBackToRideRequest")}
+          </Link>
+          <Link href="/(tabs)" style={styles.linkSecondary}>
+            {t("goToHome")}
+          </Link>
+        </ScrollView>
+      </View>  {/* end bottomSheet */}
     </View>
   );
 }
@@ -1050,72 +1138,54 @@ export default function ActiveTripScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#f8faff",
-    paddingTop: 60,
+    backgroundColor: "#c8d8e8",
+  },
+  headerOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingTop: Platform.OS === "ios" ? 56 : 40,
     paddingHorizontal: 16,
-    paddingBottom: 24,
+    paddingBottom: 10,
   },
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 14,
   },
   title: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: "#1f2a44",
+    fontSize: 22,
+    fontWeight: "800",
+    color: "#ffffff",
+    textShadowColor: "rgba(0,0,0,0.5)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   sosButton: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     backgroundColor: "#dc2626",
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#000000",
-    shadowOpacity: 0.18,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 4,
+    shadowOpacity: 0.28,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 6,
   },
   sosButtonText: {
     color: "#ffffff",
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "800",
-  },
-  mapWrap: {
-    flex: 1,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#dbe4f5",
-    overflow: "hidden",
-    backgroundColor: "#eaf0ff",
-  },
-  map: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  mapCaption: {
-    position: "absolute",
-    left: 8,
-    right: 8,
-    bottom: 8,
-    backgroundColor: "rgba(255,255,255,0.92)",
-    borderRadius: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-  },
-  mapCaptionText: {
-    fontSize: 12,
-    color: "#334155",
-    textAlign: "center",
   },
   mapPlaceholder: {
     flex: 1,
-    minHeight: 200,
     alignItems: "center",
     justifyContent: "center",
     padding: 20,
+    backgroundColor: "#eaf0ff",
   },
   mapPlaceholderTitle: {
     fontSize: 20,
@@ -1128,49 +1198,202 @@ const styles = StyleSheet.create({
     color: "#4b587c",
     fontSize: 15,
   },
-  bottomCard: {
-    marginTop: 16,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#e6ebf5",
+  bottomSheet: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    maxHeight: "35%",
     backgroundColor: "#ffffff",
-    padding: 14,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    elevation: 14,
+  },
+  driverPanel: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#cbd5e1",
+    alignSelf: "center",
+    marginTop: 10,
+    marginBottom: 10,
+  },
+  etaStrip: {
+    backgroundColor: "#4f46e5",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    marginBottom: 10,
+  },
+  etaMainText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  driverCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 10,
+  },
+  avatarCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#e0e7ff",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  avatarInitials: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#4f46e5",
+  },
+  driverMeta: {
+    flex: 1,
+    gap: 2,
+  },
+  driverNameRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  driverNameText: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: "#1f2a44",
+  },
+  rideCount: {
+    fontSize: 12,
+    color: "#64748b",
+    fontWeight: "500",
+  },
+  driverStatsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 2,
+  },
+  statChip: {
+    fontSize: 13,
+    color: "#334155",
+    fontWeight: "600",
+  },
+  vehicleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 2,
+  },
+  vehicleText: {
+    fontSize: 12,
+    color: "#475569",
+    fontWeight: "600",
+  },
+  seatBadge: {
+    fontSize: 12,
+    color: "#475569",
+    fontWeight: "600",
+  },
+  passengerRepChip: {
+    fontSize: 12,
+    color: "#0f766e",
+    fontWeight: "600",
+    marginTop: 2,
+  },
+  actionRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 4,
+  },
+  actionBtn: {
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 44,
+  },
+  editRideBtn: {
+    backgroundColor: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+  },
+  editRideBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#334155",
+  },
+  contactBtn: {
+    backgroundColor: "#f0fdf4",
+    borderWidth: 1.5,
+    borderColor: "#0d9488",
+  },
+  contactBtnUnread: {
+    backgroundColor: "#0d9488",
+    borderColor: "#0d9488",
+  },
+  contactBtnInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  contactBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0d9488",
+  },
+  contactBtnTextUnread: {
+    color: "#ffffff",
+  },
+  bottomSheetContent: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === "ios" ? 36 : 24,
+  },
+  progressContainer: {
+    marginBottom: 14,
+  },
+  progressHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+  progressLabel: {
+    fontSize: 12,
+    color: "#64748b",
+    fontWeight: "600",
+  },
+  progressPct: {
+    fontSize: 12,
+    color: "#0d9488",
+    fontWeight: "700",
+  },
+  progressTrack: {
+    height: 8,
+    backgroundColor: "#e2e8f0",
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    backgroundColor: "#0d9488",
+    borderRadius: 4,
   },
   legLabel: {
     fontSize: 14,
     fontWeight: "700",
     color: "#0f766e",
     marginBottom: 6,
-  },
-  liveEtaBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "#eff6ff",
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: "#bfdbfe",
-  },
-  liveEtaDot: { fontSize: 18 },
-  liveEtaText: { fontSize: 14, fontWeight: "700", color: "#1d4ed8", flex: 1 },
-  driverName: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#1f2a44",
-  },
-  meta: {
-    marginTop: 6,
-    fontSize: 14,
-    color: "#4b587c",
-  },
-  repText: {
-    marginTop: 8,
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#0f766e",
   },
   repHint: {
     marginTop: 7,
@@ -1226,34 +1449,6 @@ const styles = StyleSheet.create({
     color: "#334155",
     fontWeight: "500",
   },
-  chatButton: {
-    marginTop: 14,
-    borderRadius: 14,
-    paddingVertical: 14,
-    minHeight: 50,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#f0fdf4",
-    borderWidth: 1.5,
-    borderColor: "#0d9488",
-  },
-  chatButtonUnread: {
-    backgroundColor: "#0d9488",
-    borderColor: "#0d9488",
-  },
-  chatButtonInner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  chatButtonText: {
-    color: "#0d9488",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  chatButtonTextUnread: {
-    color: "#ffffff",
-  },
   chatBadge: {
     backgroundColor: "#ef4444",
     borderRadius: 10,
@@ -1268,25 +1463,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "800",
     lineHeight: 13,
-  },
-  cancelRideButton: {
-    marginTop: 14,
-    borderWidth: 1.5,
-    borderColor: "#ef4444",
-    borderRadius: 12,
-    paddingVertical: 14,
-    minHeight: 50,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "transparent",
-  },
-  cancelRideButtonDisabled: {
-    opacity: 0.7,
-  },
-  cancelRideButtonText: {
-    color: "#ef4444",
-    fontSize: 15,
-    fontWeight: "700",
   },
   endTripButton: {
     marginTop: 14,
